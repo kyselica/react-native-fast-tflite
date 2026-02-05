@@ -67,6 +67,12 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
           }
         }
 
+        // Parse numThreads (default to 4 if not provided)
+        int numThreads = 1;
+        if (count > 2 && arguments[2].isNumber()) {
+          numThreads = static_cast<int>(arguments[2].asNumber());
+        }
+
         auto promise = Promise::createPromise(runtime, [=, &runtime](
                                                            std::shared_ptr<Promise> promise) {
           // Launch async thread
@@ -85,6 +91,7 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
 
               // Create TensorFlow Interpreter
               auto options = TfLiteInterpreterOptionsCreate();
+              TfLiteInterpreterOptionsSetNumThreads(options, numThreads);
 
               switch (delegateType) {
                 case Delegate::CoreML: {

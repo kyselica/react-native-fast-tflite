@@ -22,7 +22,8 @@ declare global {
   // eslint-disable-next-line no-var
   var __loadTensorflowModel: (
     path: string,
-    delegate: TensorflowModelDelegate
+    delegate: TensorflowModelDelegate,
+    numThreads: number
   ) => Promise<TensorflowModel>
 }
 // Installs the JSI bindings into the global namespace.
@@ -39,6 +40,22 @@ export type TensorflowModelDelegate =
   | 'core-ml'
   | 'nnapi'
   | 'android-gpu'
+
+export interface TensorflowModelOptions {
+  /**
+   * The delegate to use for computations.
+   * Uses the standard CPU delegate per default.
+   * The `core-ml` or `metal` delegates are GPU-accelerated, but don't work on every model.
+   * @default 'default'
+   */
+  delegate?: TensorflowModelDelegate
+  /**
+   * The number of threads to use for inference.
+   * Uses 1 threads by default.
+   * @default 1
+   */
+  numThreads?: number
+}
 
 export interface Tensor {
   /**
@@ -119,12 +136,14 @@ export type TensorflowPlugin =
  * * If you are passing in a `{ url: ... }`, make sure the URL points directly to a `.tflite` model. This can either be a web URL (`http://..`/`https://..`), or a local file (`file://..`).
  *
  * @param source The `.tflite` model in form of either a `require(..)` statement or a `{ url: string }`.
- * @param delegate The delegate to use for computations. Uses the standard CPU delegate per default. The `core-ml` or `metal` delegates are GPU-accelerated, but don't work on every model.
+ * @param delegateOrOptions The delegate to use for computations (string), or an options object containing `delegate` and `numThreads`. Uses the standard CPU delegate and 1 thread per default.
  * @returns The loaded Model.
  */
 export function loadTensorflowModel(
   source: ModelSource,
-  delegate: TensorflowModelDelegate = 'default'
+  delegateOrOptions:
+    | TensorflowModelDelegate
+    | TensorflowModelOptions = 'default'
 ): Promise<TensorflowModel> {
   let uri: string
   if (typeof source === 'number') {
@@ -139,7 +158,18 @@ export function loadTensorflowModel(
       'TFLite: Invalid source passed! Source should be either a React Native require(..) or a `{ url: string }` object!'
     )
   }
-  return global.__loadTensorflowModel(uri, delegate)
+
+  // Parse options
+  let delegate: TensorflowModelDelegate = 'default'
+  let numThreads = 1
+  if (typeof delegateOrOptions === 'string') {
+    delegate = delegateOrOptions
+  } else if (typeof delegateOrOptions === 'object') {
+    delegate = delegateOrOptions.delegate ?? 'default'
+    numThreads = delegateOrOptions.numThreads ?? 1
+  }
+
+  return global.__loadTensorflowModel(uri, delegate, numThreads)
 }
 
 /**
@@ -149,12 +179,14 @@ export function loadTensorflowModel(
  * * If you are passing in a `{ url: ... }`, make sure the URL points directly to a `.tflite` model. This can either be a web URL (`http://..`/`https://..`), or a local file (`file://..`).
  *
  * @param source The `.tflite` model in form of either a `require(..)` statement or a `{ url: string }`.
- * @param delegate The delegate to use for computations. Uses the standard CPU delegate per default. The `core-ml` or `metal` delegates are GPU-accelerated, but don't work on every model.
+ * @param delegateOrOptions The delegate to use for computations (string), or an options object containing `delegate` and `numThreads`. Uses the standard CPU delegate and 1 thread per default.
  * @returns The state of the Model.
  */
 export function useTensorflowModel(
   source: ModelSource,
-  delegate: TensorflowModelDelegate = 'default'
+  delegateOrOptions:
+    | TensorflowModelDelegate
+    | TensorflowModelOptions = 'default'
 ): TensorflowPlugin {
   const [state, setState] = useState<TensorflowPlugin>({
     model: undefined,
@@ -165,7 +197,7 @@ export function useTensorflowModel(
     const load = async (): Promise<void> => {
       try {
         setState({ model: undefined, state: 'loading' })
-        const m = await loadTensorflowModel(source, delegate)
+        const m = await loadTensorflowModel(source, delegateOrOptions)
         setState({ model: m, state: 'loaded' })
         console.log('Model loaded!')
       } catch (e) {
@@ -174,7 +206,7 @@ export function useTensorflowModel(
       }
     }
     load()
-  }, [delegate, source])
+  }, [delegateOrOptions, source])
 
   return state
 }
