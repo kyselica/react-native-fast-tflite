@@ -24,9 +24,19 @@
 #else
 #include <TensorFlowLiteC/TensorFlowLiteC.h>
 
-#if FAST_TFLITE_ENABLE_CORE_ML
-#include <TensorFlowLiteCCoreML/TensorFlowLiteCCoreML.h>
-#endif
+// Delegate wrappers are implemented in ios/DelegateWrapper.mm (Objective-C++)
+// because the delegate framework headers may import Objective-C frameworks.
+// Forward declare the C functions here - the implementation handles availability checks.
+
+// Metal delegate
+extern "C" TfLiteDelegate* TFLCreateMetalDelegate(void);
+extern "C" void TFLDeleteMetalDelegate(TfLiteDelegate* delegate);
+extern "C" bool TFLIsMetalDelegateAvailable(void);
+
+// CoreML delegate
+extern "C" TfLiteDelegate* TFLCreateCoreMLDelegate(void);
+extern "C" void TFLDeleteCoreMLDelegate(TfLiteDelegate* delegate);
+extern "C" bool TFLIsCoreMLDelegateAvailable(void);
 #endif
 
 using namespace facebook;
@@ -95,22 +105,30 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
 
               switch (delegateType) {
                 case Delegate::CoreML: {
-#if FAST_TFLITE_ENABLE_CORE_ML
-                  TfLiteCoreMlDelegateOptions delegateOptions;
-                  auto delegate = TfLiteCoreMlDelegateCreate(&delegateOptions);
-                  TfLiteInterpreterOptionsAddDelegate(options, delegate);
+                  if (!TFLIsCoreMLDelegateAvailable()) {
+                    callInvoker->invokeAsync([=]() {
+                      promise->reject("CoreML Delegate is not enabled! Set $EnableCoreMLDelegate to true in Podfile and rebuild.");
+                    });
+                    return;
+                  }
+                  auto delegate = TFLCreateCoreMLDelegate();
+                  if (delegate != nullptr) {
+                    TfLiteInterpreterOptionsAddDelegate(options, delegate);
+                  }
                   break;
-#else
-                      callInvoker->invokeAsync([=]() {
-                        promise->reject("CoreML Delegate is not enabled! Set $EnableCoreMLDelegate to true in Podfile and rebuild.");
-                      });
-                      return;
-#endif
                 }
                 case Delegate::Metal: {
-                  callInvoker->invokeAsync(
-                      [=]() { promise->reject("Metal Delegate is not supported!"); });
-                  return;
+                  if (!TFLIsMetalDelegateAvailable()) {
+                    callInvoker->invokeAsync([=]() {
+                      promise->reject("Metal Delegate is not enabled! Set $EnableMetalDelegate to true in Podfile and rebuild.");
+                    });
+                    return;
+                  }
+                  auto delegate = TFLCreateMetalDelegate();
+                  if (delegate != nullptr) {
+                    TfLiteInterpreterOptionsAddDelegate(options, delegate);
+                  }
+                  break;
                 }
 #ifdef ANDROID
                 case Delegate::NnApi: {

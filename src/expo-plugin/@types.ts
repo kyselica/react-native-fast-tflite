@@ -5,6 +5,12 @@ export type ConfigProps = {
    */
   enableCoreMLDelegate?: boolean
   /**
+   * Whether to enable the Metal GPU acceleration delegate for iOS, or not.
+   * Metal delegate provides GPU acceleration using Apple's Metal framework.
+   * @default false
+   */
+  enableMetalDelegate?: boolean
+  /**
    * Whether to enable the GPU acceleration delegate for GPU, by including related native libraries.
    * You can leave it as boolean for an array of native libraries.
    *
