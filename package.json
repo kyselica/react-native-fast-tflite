@@ -1,5 +1,5 @@
 {
-  "name": "react-native-fast-tflite",
+  "name": "@kyselica/react-native-fast-tflite",
   "version": "2.0.0",
   "description": "High-performance TensorFlow Lite library for React Native",
   "main": "lib/commonjs/index",
@@ -48,7 +48,7 @@
     "ios",
     "android"
   ],
-  "repository": "https://github.com/mrousavy/react-native-fast-tflite",
+  "repository": "https://github.com/kyselica/react-native-fast-tflite",
   "author": "Marc Rousavy <me@mrousavy.com> (https://github.com/mrousavy)",
   "license": "MIT",
   "bugs": {
