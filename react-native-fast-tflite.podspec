@@ -9,6 +9,16 @@ if defined?($EnableCoreMLDelegate)
 end
 Pod::UI.puts "[TFLite] CoreML Delegate is set to #{enableCoreMLDelegate}! ($EnableCoreMLDelegate setting in Podfile)"
 
+enableMetalDelegate = false
+if defined?($EnableMetalDelegate)
+  enableMetalDelegate = $EnableMetalDelegate
+end
+Pod::UI.puts "[TFLite] Metal Delegate is set to #{enableMetalDelegate}! ($EnableMetalDelegate setting in Podfile)"
+
+# Convert to 1/0 for preprocessor
+coreMLFlag = enableCoreMLDelegate ? 1 : 0
+metalFlag = enableMetalDelegate ? 1 : 0
+
 Pod::Spec.new do |s|
   s.name         = "react-native-fast-tflite"
   s.version      = package["version"]
@@ -20,16 +30,20 @@ Pod::Spec.new do |s|
   s.platforms    = { :ios => "11.0" }
   s.source       = { :git => "https://github.com/mrousavy/react-native-fast-tflite.git", :tag => "#{s.version}" }
 
-  s.source_files = "ios/**/*.{h,m,mm}", "cpp/**/*.{hpp,cpp,c,h}"
+  s.source_files = "ios/**/*.{h,m,mm}", "cpp/**/*.{hpp,cpp,mm,c,h}"
 
+  # Base xcconfig
   s.pod_target_xcconfig = {
-    'GCC_PREPROCESSOR_DEFINITIONS' => "$(inherited) FAST_TFLITE_ENABLE_CORE_ML=#{enableCoreMLDelegate}",
+    'GCC_PREPROCESSOR_DEFINITIONS' => "$(inherited) FAST_TFLITE_ENABLE_CORE_ML=#{coreMLFlag} FAST_TFLITE_ENABLE_METAL=#{metalFlag}",
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
   }
 
   s.dependency "TensorFlowLiteC", "2.17.0"
   if enableCoreMLDelegate then
     s.dependency "TensorFlowLiteC/CoreML", "2.17.0"
+  end
+  if enableMetalDelegate then
+    s.dependency "TensorFlowLiteC/Metal", "2.17.0"
   end
 
   # Use install_modules_dependencies helper to install the dependencies if React Native version >=0.71.0.
@@ -44,9 +58,9 @@ Pod::Spec.new do |s|
     s.compiler_flags = folly_compiler_flags + " -DRCT_NEW_ARCH_ENABLED=1"
     s.pod_target_xcconfig    = {
         "HEADER_SEARCH_PATHS" => "\"$(PODS_ROOT)/boost\"",
+        'GCC_PREPROCESSOR_DEFINITIONS' => "$(inherited) FAST_TFLITE_ENABLE_CORE_ML=#{coreMLFlag} FAST_TFLITE_ENABLE_METAL=#{metalFlag}",
         'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
         "OTHER_CPLUSPLUSFLAGS" => "-DFOLLY_NO_CONFIG -DFOLLY_MOBILE=1 -DFOLLY_USE_LIBCPP=1",
-        "CLANG_CXX_LANGUAGE_STANDARD" => "c++17"
     }
     s.dependency "React-Codegen"
     s.dependency "RCT-Folly"
