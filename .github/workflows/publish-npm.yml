@@ -36,17 +36,12 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Prepare npm config for npmjs publish
+      - name: Verify publish registry
         run: |
-          cat > .npmrc.publish <<EOF
-          @kyselica:registry=https://registry.npmjs.org/
-          //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
-          always-auth=true
-          EOF
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm config get registry
+          npm config get @kyselica:registry
 
       - name: Publish package
-        run: npm publish --access public --provenance --userconfig .npmrc.publish
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
