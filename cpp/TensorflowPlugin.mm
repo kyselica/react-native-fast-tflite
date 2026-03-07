@@ -104,6 +104,20 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
               TfLiteInterpreterOptionsSetNumThreads(options, numThreads);
 
               switch (delegateType) {
+#ifdef ANDROID
+                case Delegate::CoreML: {
+                  callInvoker->invokeAsync([=]() {
+                    promise->reject("CoreML Delegate is only supported on iOS!");
+                  });
+                  return;
+                }
+                case Delegate::Metal: {
+                  callInvoker->invokeAsync([=]() {
+                    promise->reject("Metal Delegate is only supported on iOS!");
+                  });
+                  return;
+                }
+#else
                 case Delegate::CoreML: {
                   if (!TFLIsCoreMLDelegateAvailable()) {
                     callInvoker->invokeAsync([=]() {
@@ -130,6 +144,7 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                   }
                   break;
                 }
+#endif
 #ifdef ANDROID
                 case Delegate::NnApi: {
                   TfLiteNnapiDelegateOptions delegateOptions = TfLiteNnapiDelegateOptionsDefault();
@@ -144,16 +159,18 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                   break;
                 }
 #else
-                    case Delegate::NnApi: {
-                      callInvoker->invokeAsync([=]() { 
-                        promise->reject("Nnapi Delegate is only supported on Android!"); 
-                      });
-                    }
-                    case Delegate::AndroidGPU: {
-                      callInvoker->invokeAsync([=]() { 
-                        promise->reject("Android-Gpu Delegate is not supported on Android!"); 
-                      });
-                    }
+                case Delegate::NnApi: {
+                  callInvoker->invokeAsync([=]() {
+                    promise->reject("NNAPI Delegate is only supported on Android!");
+                  });
+                  return;
+                }
+                case Delegate::AndroidGPU: {
+                  callInvoker->invokeAsync([=]() {
+                    promise->reject("Android GPU Delegate is only supported on Android!");
+                  });
+                  return;
+                }
 #endif
                 default: {
                   // use default CPU delegate.

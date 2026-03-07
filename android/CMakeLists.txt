@@ -26,13 +26,25 @@ find_library(
 
 string(APPEND CMAKE_CXX_FLAGS " -DANDROID")
 
+set(TFLITE_COMMON_SOURCES
+  ../cpp/jsi/Promise.mm
+  ../cpp/jsi/TypedArray.mm
+  ../cpp/TensorflowPlugin.mm
+  ../cpp/TensorHelpers.mm
+)
+
+# These shared sources are pure C++, but stored as `.mm` for iOS (Objective-C++).
+# LANGUAGE CXX selects the right compiler; "-x c++" overrides extension-based
+# language detection so clang doesn't emit ObjC personality references.
+set_source_files_properties(${TFLITE_COMMON_SOURCES} PROPERTIES
+  LANGUAGE CXX
+  COMPILE_FLAGS "-x c++"
+)
+
 add_library(
   ${PACKAGE_NAME}
   SHARED
-  ../cpp/jsi/Promise.cpp
-  ../cpp/jsi/TypedArray.cpp
-  ../cpp/TensorflowPlugin.cpp
-  ../cpp/TensorHelpers.cpp
+  ${TFLITE_COMMON_SOURCES}
   src/main/cpp/Tflite.cpp
 )
 
