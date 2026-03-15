@@ -8,6 +8,7 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 
 import com.facebook.proguard.annotations.DoNotStrip;
+import com.facebook.react.bridge.CatalystInstance;
 import com.facebook.react.bridge.JavaScriptContextHolder;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
@@ -20,6 +21,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.lang.ref.WeakReference;
 import java.util.Objects;
 
@@ -138,11 +140,7 @@ public class TfliteModule extends ReactContextBaseJavaModule {
 
       ReactApplicationContext context = getReactApplicationContext();
       JavaScriptContextHolder jsContext = context.getJavaScriptContextHolder();
-
-      // getJSCallInvokerHolder() works for both old and new architecture.
-      // Old arch: delegates to getCatalystInstance().getJSCallInvokerHolder()
-      // New arch (bridgeless): overridden in BridgelessReactContext to return the host's invoker
-      CallInvokerHolderImpl callInvoker = (CallInvokerHolderImpl) context.getJSCallInvokerHolder();
+      CallInvokerHolderImpl callInvoker = getJSCallInvokerHolder(context);
 
       Log.i(NAME, "Installing JSI Bindings for VisionCamera Tflite plugin...");
       boolean successful = nativeInstall(jsContext.get(), callInvoker);
@@ -157,6 +155,22 @@ public class TfliteModule extends ReactContextBaseJavaModule {
       Log.e(NAME, "Failed to install JSI Bindings!", exception);
       return false;
     }
+  }
+
+  private CallInvokerHolderImpl getJSCallInvokerHolder(ReactApplicationContext context) throws Exception {
+    // Newer RN versions expose getJSCallInvokerHolder() on ReactContext subclasses.
+    try {
+      Method getJSCallInvokerHolderMethod = context.getClass().getMethod("getJSCallInvokerHolder");
+      Object callInvokerHolder = getJSCallInvokerHolderMethod.invoke(context);
+      if (callInvokerHolder instanceof CallInvokerHolderImpl) {
+        return (CallInvokerHolderImpl) callInvokerHolder;
+      }
+    } catch (NoSuchMethodException ignored) {
+      // Fall back to CatalystInstance for RN versions that don't expose this method.
+    }
+
+    CatalystInstance catalystInstance = context.getCatalystInstance();
+    return (CallInvokerHolderImpl) catalystInstance.getJSCallInvokerHolder();
   }
 
   private static native boolean nativeInstall(long jsiPtr, CallInvokerHolderImpl jsCallInvoker);
