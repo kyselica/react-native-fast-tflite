@@ -23,7 +23,8 @@ declare global {
   var __loadTensorflowModel: (
     path: string,
     delegate: TensorflowModelDelegate,
-    numThreads: number
+    numThreads: number,
+    debugMode: boolean
   ) => Promise<TensorflowModel>
 }
 // Installs the JSI bindings into the global namespace.
@@ -55,6 +56,86 @@ export interface TensorflowModelOptions {
    * @default 1
    */
   numThreads?: number
+  /**
+   * Enable debug mode to log per-tensor hardware placement and inference timing
+   * after each call to `run()` or `runSync()`.
+   *
+   * When enabled:
+   * - Timing and hardware info are printed to the native console (logcat / Xcode console).
+   * - `model.stats` is populated after each inference.
+   * - A `⚠ CPU fallback` warning is shown for any tensor that ran on CPU while a
+   *   hardware delegate (Metal, CoreML, NNAPI, Android GPU) was configured — this
+   *   indicates an op that the delegate does not support.
+   *
+   * Has no effect on inference results or correctness. Adds a small overhead from
+   * chrono timing and tensor inspection; keep disabled in production.
+   * @default false
+   */
+  enableDebugMode?: boolean
+}
+
+/**
+ * Per-tensor hardware placement info collected during one inference run.
+ */
+export interface TensorDebugInfo {
+  /** Absolute tensor index in the model's tensor graph */
+  index: number
+  /** Tensor name — typically the name of the op that produced it */
+  name: string
+  /** Tensor shape */
+  shape: number[]
+  /**
+   * Hardware that processed this tensor.
+   * - `'cpu'` — ran on the CPU.
+   * - `'metal'` — ran on the Metal GPU delegate (iOS).
+   * - `'core-ml'` — ran on the CoreML delegate (iOS).
+   * - `'nnapi'` — ran on the NNAPI delegate (Android).
+   * - `'android-gpu'` — ran on the Android GPU delegate.
+   *
+   * A `'cpu'` value for an intermediate tensor when a GPU/NPU delegate is
+   * configured means that op fell back to CPU because the delegate does not
+   * support it.
+   */
+  hardware: 'cpu' | 'metal' | 'core-ml' | 'nnapi' | 'android-gpu'
+}
+
+/**
+ * Per-op timing entry from the TFLite telemetry profiler.
+ * Only populated on iOS (TensorFlowLiteC 2.17+ ships profiler.h).
+ * Android returns an empty array.
+ */
+export interface OpTiming {
+  /** Operator name, e.g. `"CONV_2D"`, `"DEPTHWISE_CONV_2D"` */
+  name: string
+  /** Operator index in the model's execution plan */
+  opIdx: number
+  /** Wall-clock execution time for this op in milliseconds */
+  durationMs: number
+}
+
+/**
+ * Aggregated statistics from a single inference run.
+ * Available via `model.stats` after each `run()` / `runSync()` call when
+ * `enableDebugMode: true` is set in the model options.
+ */
+export interface InferenceStats {
+  /**
+   * Wall-clock time for `TfLiteInterpreterInvoke()` in milliseconds.
+   * Does not include input/output copy time.
+   */
+  totalTimeMs: number
+  /**
+   * Hardware placement for input and output compute tensors.
+   * A `'cpu'` value when a GPU/NPU delegate is configured means that
+   * tensor's op fell back to CPU (unsupported by the delegate).
+   */
+  tensors: TensorDebugInfo[]
+  /**
+   * Per-op execution times recorded by the TFLite telemetry profiler.
+   * Populated on iOS with TensorFlowLiteC 2.17+; empty array on Android.
+   * `undefined` only in test/mock contexts where the native layer is absent.
+   */
+  opTimings?: OpTiming[]
 }
 
 export interface Tensor {
@@ -108,6 +189,13 @@ export interface TensorflowModel {
    * The user is responsible for correctly interpreting this data.
    */
   outputs: Tensor[]
+
+  /**
+   * Debug statistics from the most recent inference run.
+   * Only populated when `enableDebugMode: true` was set in the model options.
+   * Updated after every call to `run()` or `runSync()`.
+   */
+  stats: InferenceStats | undefined
 }
 
 // In React Native, `require(..)` returns a number.
@@ -128,6 +216,77 @@ export type TensorflowPlugin =
       error: Error
       state: 'error'
     }
+
+// ---------------------------------------------------------------------------
+// Debug-mode helpers — all logging happens on the JS thread after inference
+// completes, so there are no cross-thread JSI calls and no risk of hangs.
+// ---------------------------------------------------------------------------
+
+function printStats(model: TensorflowModel): void {
+  const stats = model.stats
+  if (!stats) return
+  const delegateName = model.delegate
+
+  let cpuCount = 0
+  let delegateCount = 0
+  for (const t of stats.tensors) {
+    if (t.hardware === 'cpu') cpuCount++
+    else delegateCount++
+  }
+
+  console.log(
+    `[TFLite] Inference: ${stats.totalTimeMs.toFixed(3)}ms | delegate: ${delegateName} | tensors: ${cpuCount} cpu, ${delegateCount} ${delegateName}`
+  )
+
+  // Per-tensor hardware placement
+  for (const t of stats.tensors) {
+    const isFallback = t.hardware === 'cpu' && delegateName !== 'default'
+    console.log(
+      `[TFLite]   tensor[${t.index}] '${t.name}' [${t.shape.join(',')}] \u2192 ${t.hardware}${isFallback ? ' \u26A0 CPU fallback' : ''}`
+    )
+  }
+
+  // Per-op timing (iOS only; empty on Android)
+  if (stats.opTimings && stats.opTimings.length > 0) {
+    console.log(`[TFLite] Per-op timings (${stats.opTimings.length} ops):`)
+    for (const op of stats.opTimings) {
+      console.log(`[TFLite]   op[${op.opIdx}] '${op.name}' ${op.durationMs.toFixed(3)}ms`)
+    }
+  }
+}
+
+/**
+ * Wraps a native TensorflowModel to automatically print InferenceStats to the
+ * Metro / JS console after every run() / runSync() call.
+ * The wrapper is a plain JS object — no JSI property writes, no background
+ * thread callbacks — so it cannot cause hangs.
+ */
+function wrapWithDebugLogging(native: TensorflowModel): TensorflowModel {
+  return {
+    get delegate() {
+      return native.delegate
+    },
+    get inputs() {
+      return native.inputs
+    },
+    get outputs() {
+      return native.outputs
+    },
+    get stats() {
+      return native.stats
+    },
+    runSync(input: TypedArray[]) {
+      const result = native.runSync(input)
+      printStats(native)
+      return result
+    },
+    async run(input: TypedArray[]) {
+      const result = await native.run(input)
+      printStats(native)
+      return result
+    },
+  }
+}
 
 /**
  * Load a Tensorflow Lite Model from the given `.tflite` asset.
@@ -162,14 +321,23 @@ export function loadTensorflowModel(
   // Parse options
   let delegate: TensorflowModelDelegate = 'default'
   let numThreads = 1
+  let debugMode = false
   if (typeof delegateOrOptions === 'string') {
     delegate = delegateOrOptions
   } else if (typeof delegateOrOptions === 'object') {
     delegate = delegateOrOptions.delegate ?? 'default'
     numThreads = delegateOrOptions.numThreads ?? 1
+    debugMode = delegateOrOptions.enableDebugMode ?? false
   }
 
-  return global.__loadTensorflowModel(uri, delegate, numThreads)
+  // Use .then() rather than async/await so we never introduce an extra microtask
+  // boundary around the JSI HostObject — async functions can cause JSI values to
+  // be accessed outside their valid scope in some RN/JSI versions.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (global as any).__loadTensorflowModel(uri, delegate, numThreads, debugMode).then(
+    (nativeModel: TensorflowModel) =>
+      debugMode ? wrapWithDebugLogging(nativeModel) : nativeModel
+  )
 }
 
 /**

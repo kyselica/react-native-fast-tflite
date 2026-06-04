@@ -31,6 +31,7 @@ set(TFLITE_COMMON_SOURCES
   ../cpp/jsi/TypedArray.mm
   ../cpp/TensorflowPlugin.mm
   ../cpp/TensorHelpers.mm
+  ../cpp/JumpProcessor.mm
 )
 
 # These shared sources are pure C++, but stored as `.mm` for iOS (Objective-C++).
@@ -71,7 +72,8 @@ set_target_properties(${PACKAGE_NAME} PROPERTIES LINKER_LANGUAGE CXX)
 
 target_link_libraries(
   ${PACKAGE_NAME}
-  android                         # <-- log
+  android                         # <-- ANativeWindow, AAssetManager
+  log                             # <-- __android_log_print (liblog)
   ReactAndroid::jsi               # <-- jsi.h
   fbjni::fbjni                    # <-- fbjni.h
   ${TFLITE}

@@ -4,6 +4,7 @@
 #include <jsi/jsi.h>
 #include <memory>
 
+#include "JumpProcessor.h"
 #include "TensorflowPlugin.h"
 #include <ReactCommon/CallInvoker.h>
 #include <ReactCommon/CallInvokerHolder.h>
@@ -56,6 +57,7 @@ public:
 
     try {
       TensorflowPlugin::installToRuntime(*runtime, jsCallInvoker, fetchByteDataFromUrl);
+      JumpProcessor::installToRuntime(*runtime, jsCallInvoker);
     } catch (std::exception& exc) {
       return false;
     }

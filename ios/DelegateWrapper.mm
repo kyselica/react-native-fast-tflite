@@ -23,26 +23,29 @@ extern "C" {
 
 bool TFLIsMetalDelegateAvailable(void) {
 #if FAST_TFLITE_ENABLE_METAL
-    return true;
+  return true;
 #else
-    return false;
+  return false;
 #endif
 }
 
 TfLiteDelegate* TFLCreateMetalDelegate(void) {
 #if FAST_TFLITE_ENABLE_METAL
-    TFLGpuDelegateOptions options = TFLGpuDelegateOptionsDefault();
-    return TFLGpuDelegateCreate(&options);
+  // Default (FP32) options. FP16 (allow_precision_loss) was tried but gave
+  // negligible speedup on Apple GPUs (Metal already runs efficiently), so it's
+  // not worth the precision loss here. Android keeps FP16 — it's a big win there.
+  TFLGpuDelegateOptions options = TFLGpuDelegateOptionsDefault();
+  return TFLGpuDelegateCreate(&options);
 #else
-    return nullptr;
+  return nullptr;
 #endif
 }
 
 void TFLDeleteMetalDelegate(TfLiteDelegate* delegate) {
 #if FAST_TFLITE_ENABLE_METAL
-    if (delegate != nullptr) {
-        TFLGpuDelegateDelete(delegate);
-    }
+  if (delegate != nullptr) {
+    TFLGpuDelegateDelete(delegate);
+  }
 #endif
 }
 
@@ -50,31 +53,29 @@ void TFLDeleteMetalDelegate(TfLiteDelegate* delegate) {
 
 bool TFLIsCoreMLDelegateAvailable(void) {
 #if FAST_TFLITE_ENABLE_CORE_ML
-    return true;
+  return true;
 #else
-    return false;
+  return false;
 #endif
 }
 
 TfLiteDelegate* TFLCreateCoreMLDelegate(void) {
 #if FAST_TFLITE_ENABLE_CORE_ML
-    TfLiteCoreMlDelegateOptions options = {
-        .enabled_devices = TfLiteCoreMlDelegateAllDevices,
-        .coreml_version = 0,
-        .max_delegated_partitions = 0,
-        .min_nodes_per_partition = 2
-    };
-    return TfLiteCoreMlDelegateCreate(&options);
+  TfLiteCoreMlDelegateOptions options = {.enabled_devices = TfLiteCoreMlDelegateAllDevices,
+                                         .coreml_version = 0,
+                                         .max_delegated_partitions = 0,
+                                         .min_nodes_per_partition = 2};
+  return TfLiteCoreMlDelegateCreate(&options);
 #else
-    return nullptr;
+  return nullptr;
 #endif
 }
 
 void TFLDeleteCoreMLDelegate(TfLiteDelegate* delegate) {
 #if FAST_TFLITE_ENABLE_CORE_ML
-    if (delegate != nullptr) {
-        TfLiteCoreMlDelegateDelete(delegate);
-    }
+  if (delegate != nullptr) {
+    TfLiteCoreMlDelegateDelete(delegate);
+  }
 #endif
 }
 

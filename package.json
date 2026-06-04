@@ -1,6 +1,6 @@
 {
   "name": "@kyselicaa/react-native-fast-tflite",
-  "version": "2.0.5",
+  "version": "2.0.6-beta.19",
   "description": "High-performance TensorFlow Lite library for React Native",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
@@ -92,6 +92,9 @@
     "modulePathIgnorePatterns": [
       "<rootDir>/example/node_modules",
       "<rootDir>/lib/"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@react-native|react-native|@react-native-community)/)"
     ]
   },
   "release-it": {
@@ -118,11 +121,6 @@
     "tabWidth": 2,
     "trailingComma": "es5",
     "useTabs": false
-  },
-  "babel": {
-    "presets": [
-      "module:metro-react-native-babel-preset"
-    ]
   },
   "react-native-builder-bob": {
     "source": "src",

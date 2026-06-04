@@ -1,4 +1,5 @@
 #import "Tflite.h"
+#import "../cpp/JumpProcessor.h"
 #import "../cpp/TensorflowPlugin.h"
 #import <React-callinvoker/ReactCommon/CallInvoker.h>
 #import <React/RCTBridge+Private.h>
@@ -38,6 +39,7 @@ RCT_EXPORT_MODULE(Tflite)
 
   try {
     TensorflowPlugin::installToRuntime(runtime, [bridge jsCallInvoker], fetchByteDataFromUrl);
+    JumpProcessor::installToRuntime(runtime, [bridge jsCallInvoker]);
   } catch (std::exception& exc) {
     NSLog(@"Failed to install TensorFlow Lite plugin to Runtime! %s", exc.what());
     return @(false);
