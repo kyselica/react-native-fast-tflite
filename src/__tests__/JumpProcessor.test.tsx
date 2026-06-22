@@ -42,6 +42,7 @@ const noop: () => void = () => undefined
 function makeFakeProcessor(): JumpProcessor {
   return {
     pushBackbone: jest.fn(),
+    setFullModelInterval: jest.fn(),
     reset: jest.fn(),
     dispose: jest.fn(),
     stats: {

@@ -52,6 +52,8 @@ JumpProcessor::JumpProcessor(std::shared_ptr<TensorflowPlugin> fullModel,
   _ring.assign(static_cast<size_t>(_config.bufferSize) * _config.outputSize, 0.0f);
   _snapshot.assign(static_cast<size_t>(_config.bufferSize) * _config.outputSize, 0.0f);
 
+  _fullModelInterval.store(_config.fullModelInterval);
+
   _worker = std::thread(&JumpProcessor::workerLoop, this);
 }
 
@@ -108,7 +110,8 @@ void JumpProcessor::pushBackbone(const float* data, size_t length, int64_t /*fra
     //
     // After this push, the ring in temporal order [oldest..newest] starts at the
     // new _writeIndex (the slot we'll overwrite next == the oldest frame).
-    if (totalFrames >= bufferSize && totalFrames % _config.fullModelInterval == 0) {
+    const int interval = _fullModelInterval.load();
+    if (totalFrames >= bufferSize && interval > 0 && totalFrames % interval == 0) {
       bool expected = false;
       if (_busy.compare_exchange_strong(expected, true)) {
         willTrigger = true;
@@ -149,6 +152,15 @@ void JumpProcessor::reset() {
   std::fill(_ring.begin(), _ring.end(), 0.0f);
   _writeIndex = 0;
   _frameCount = 0;
+}
+
+void JumpProcessor::setFullModelInterval(int interval) {
+  // Clamp to >= 1. Lock-free: pushBackbone reads this atomically on the next
+  // frame, so the new cadence takes effect immediately with no ring reset and
+  // no in-flight run disruption.
+  if (interval < 1)
+    interval = 1;
+  _fullModelInterval.store(interval);
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +361,16 @@ jsi::Value JumpProcessor::get(jsi::Runtime& runtime, const jsi::PropNameID& prop
           this->pushBackbone(vec.data(), vec.size(), frameNumber);
           return jsi::Value::undefined();
         });
+  } else if (propName == "setFullModelInterval") {
+    return jsi::Function::createFromHostFunction(
+        runtime, jsi::PropNameID::forAscii(runtime, "setFullModelInterval"), 1,
+        [this](jsi::Runtime& rt, const jsi::Value&, const jsi::Value* args,
+               size_t count) -> jsi::Value {
+          if (count < 1 || !args[0].isNumber())
+            return jsi::Value::undefined();
+          this->setFullModelInterval(static_cast<int>(args[0].asNumber()));
+          return jsi::Value::undefined();
+        });
   } else if (propName == "reset") {
     return jsi::Function::createFromHostFunction(
         runtime, jsi::PropNameID::forAscii(runtime, "reset"), 0,
@@ -385,6 +407,7 @@ jsi::Value JumpProcessor::get(jsi::Runtime& runtime, const jsi::PropNameID& prop
 std::vector<jsi::PropNameID> JumpProcessor::getPropertyNames(jsi::Runtime& runtime) {
   std::vector<jsi::PropNameID> result;
   result.push_back(jsi::PropNameID::forAscii(runtime, "pushBackbone"));
+  result.push_back(jsi::PropNameID::forAscii(runtime, "setFullModelInterval"));
   result.push_back(jsi::PropNameID::forAscii(runtime, "reset"));
   result.push_back(jsi::PropNameID::forAscii(runtime, "dispose"));
   result.push_back(jsi::PropNameID::forAscii(runtime, "stats"));
@@ -399,7 +422,7 @@ std::vector<jsi::PropNameID> JumpProcessor::getPropertyNames(jsi::Runtime& runti
 // changes, so JS can verify the DEVICE is actually running the latest native
 // binary (dev-pod / NDK caches sometimes link stale object files even after a
 // full `expo run`). Read via `global.__jumpProcessorNativeBuild`.
-#define JUMP_PROCESSOR_NATIVE_BUILD "beta.19-androidfp16"
+#define JUMP_PROCESSOR_NATIVE_BUILD "2.0.8-dyninterval"
 
 void JumpProcessor::installToRuntime(jsi::Runtime& runtime,
                                      std::shared_ptr<react::CallInvoker> callInvoker) {

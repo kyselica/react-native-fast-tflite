@@ -72,6 +72,11 @@ private:
   void pushBackbone(const float* data, size_t length, int64_t frameNumber);
   void reset();
   void dispose();
+  // Change how often the full model runs (every N pushed frames). Atomic so it
+  // can be flipped from the JS thread at any time; the trigger check reads it.
+  // Clamped to >= 1; no effect on the ring (the model still consumes bufferSize
+  // frames each run), only on the trigger cadence.
+  void setFullModelInterval(int interval);
 
   void workerLoop();
   // Runs on the worker thread: invoke the full model on the pre-gathered
@@ -94,6 +99,10 @@ private:
 
   int _writeIndex = 0;
   int64_t _frameCount = 0;
+  // Run the full model every N frames. Seeded from config.fullModelInterval;
+  // mutable at runtime via setFullModelInterval(). Atomic: written on the JS
+  // thread, read in pushBackbone (camera thread).
+  std::atomic<int> _fullModelInterval{0};
 
   // Worker thread + signalling
   std::thread _worker;

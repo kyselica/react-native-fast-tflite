@@ -23,6 +23,14 @@ export interface JumpProcessor {
    * @param frameNumber Monotonic global frame index (reserved; currently advisory).
    */
   pushBackbone(output: Float32Array, frameNumber: number): void
+  /**
+   * Change how often the full model runs (every N pushed frames). Safe to call
+   * at any time from the JS thread — the new cadence takes effect on the next
+   * frame with no ring reset and no disruption to an in-flight run. Clamped to
+   * `>= 1`. Does not change the ring size: the model still consumes `bufferSize`
+   * frames per run; only the trigger cadence (and thus overlap/compute) changes.
+   */
+  setFullModelInterval(interval: number): void
   /** Clear the ring + counters. Any in-flight result is discarded. */
   reset(): void
   /** Stop the background thread and release native resources. Idempotent. */
