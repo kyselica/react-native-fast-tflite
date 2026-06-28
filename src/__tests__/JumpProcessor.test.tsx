@@ -54,6 +54,12 @@ function makeFakeProcessor(): JumpProcessor {
       inputTensorBytes: 0,
       snapshotBytes: 0,
       busy: false,
+      gatherMs: 0,
+      copyInMs: 0,
+      invokeMs: 0,
+      copyOutMs: 0,
+      delegate: 'cpu',
+      ioTensors: [],
     },
   }
 }

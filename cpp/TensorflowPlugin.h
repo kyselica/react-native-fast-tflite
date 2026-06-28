@@ -119,6 +119,20 @@ public:
    */
   TfLiteInterpreter* getInterpreter() const { return _interpreter; }
 
+  /** Hardware the configured delegate runs on
+   * ("metal", "core-ml", "nnapi", "android-gpu", or "cpu"). */
+  std::string delegateHardwareName() const { return getDelegateHardwareName(); }
+
+  /**
+   * Scan the model's input/output compute tensors and report their hardware
+   * placement (cpu vs the active delegate). A "cpu" tensor while a GPU delegate
+   * is configured hints at a CPU fallback. Cheap; call after at least one run().
+   *
+   * Exposed so JumpProcessor (which runs the full model on its own thread,
+   * outside TensorflowPlugin::run()) can surface placement in its benchmark stats.
+   */
+  std::vector<TensorDebugInfo> inspectIOTensors() const;
+
 private:
   void copyInputBuffers(jsi::Runtime& runtime, jsi::Object inputValues);
   void run();

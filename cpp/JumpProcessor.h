@@ -128,4 +128,24 @@ private:
   std::atomic<int> _lastSkip{0};
   std::atomic<int> _lastInputBytes{0}; // input tensor byte size (debug)
   std::atomic<int> _expectedBytes{0};  // snapshot byte size (debug)
+
+  // Sub-step wall-clock timings (milliseconds) of the most recent full-model
+  // run, for the benchmark dev screen. Always measured — a handful of clock
+  // reads on a path that runs ~once/second, so negligible in production. Atomic
+  // so the JS thread can read them via `stats` while the worker writes.
+  //   gather  — snapshotting the ring window (camera thread, in pushBackbone)
+  //   copyIn  — TfLiteTensorCopyFromBuffer of the snapshot into the input tensor
+  //   invoke  — TfLiteInterpreterInvoke (the actual model compute)
+  //   copyOut — reading periodicity/period/marks output tensors back out
+  std::atomic<double> _lastGatherMs{0.0};
+  std::atomic<double> _lastCopyInMs{0.0};
+  std::atomic<double> _lastInvokeMs{0.0};
+  std::atomic<double> _lastCopyOutMs{0.0};
+
+  // I/O tensor hardware placement (cpu vs delegate), captured once on the worker
+  // thread after the first successful invoke (placement is stable run-to-run).
+  // Guarded by _placementMutex; read by the `stats` getter on the JS thread.
+  mutable std::mutex _placementMutex;
+  std::vector<TensorDebugInfo> _placement;
+  std::atomic<bool> _hasPlacement{false};
 };

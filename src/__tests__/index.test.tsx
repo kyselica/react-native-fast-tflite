@@ -113,6 +113,7 @@ describe('loadTensorflowModel', () => {
       'file:///model.tflite',
       'default',
       1,
+      false,
       false
     )
   })
@@ -132,6 +133,7 @@ describe('loadTensorflowModel', () => {
       'file:///fake/model.tflite',
       'default',
       1,
+      false,
       false
     )
     expect(model).toBe(fakeNativeModel)
@@ -146,6 +148,7 @@ describe('loadTensorflowModel', () => {
       'file:///model.tflite',
       'metal',
       4,
+      false,
       false
     )
   })
@@ -159,6 +162,21 @@ describe('loadTensorflowModel', () => {
       'file:///model.tflite',
       'default',
       1,
+      true,
+      false
+    )
+  })
+
+  it('forwards enableFp16: true as the fifth argument', async () => {
+    await loadTensorflowModel(
+      { url: 'file:///model.tflite' },
+      { enableFp16: true }
+    )
+    expect((global as any).__loadTensorflowModel).toHaveBeenCalledWith(
+      'file:///model.tflite',
+      'default',
+      1,
+      false,
       true
     )
   })

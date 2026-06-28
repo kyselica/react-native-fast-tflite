@@ -27,6 +27,28 @@
 #include <tflite/c/c_api.h>
 #include <tflite/delegates/gpu/delegate.h>
 #include <tflite/delegates/nnapi/nnapi_delegate_c_api.h>
+
+// XNNPACK delegate (CPU). The symbols are exported by libtensorflowlite_jni.so,
+// but litert 1.4.0 does not ship xnnpack_delegate.h, so we declare the minimal
+// C API here. The struct is byte-identical across TF 2.18/2.19 (the litert 1.4.0
+// lineage); only the leading fields are read/written. `_reserved` over-allocates
+// the struct so that if this litert build appends trailing fields,
+// TfLiteXNNPackDelegateOptionsDefault() writes into the padding instead of
+// overflowing our stack slot.
+extern "C" {
+typedef struct {
+  int32_t num_threads;
+  uint32_t flags;
+  void* weights_cache;
+  bool handle_variable_ops;
+  const char* weight_cache_file_path;
+  uint8_t _reserved[64];
+} FastTfliteXNNPackDelegateOptions;
+FastTfliteXNNPackDelegateOptions TfLiteXNNPackDelegateOptionsDefault(void);
+TfLiteDelegate* TfLiteXNNPackDelegateCreate(const FastTfliteXNNPackDelegateOptions* options);
+void TfLiteXNNPackDelegateDelete(TfLiteDelegate* delegate);
+}
+#define FAST_TFLITE_XNNPACK_FLAG_FORCE_FP16 0x00000004u
 #else
 #include <TensorFlowLiteC/TensorFlowLiteC.h>
 #include <TensorFlowLiteC/c_api_experimental.h>
@@ -37,7 +59,7 @@
 // Forward declare the C functions here - the implementation handles availability checks.
 
 // Metal delegate
-extern "C" TfLiteDelegate* TFLCreateMetalDelegate(void);
+extern "C" TfLiteDelegate* TFLCreateMetalDelegate(bool allowPrecisionLoss);
 extern "C" void TFLDeleteMetalDelegate(TfLiteDelegate* delegate);
 extern "C" bool TFLIsMetalDelegateAvailable(void);
 
@@ -168,6 +190,14 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
           debugMode = arguments[3].getBool();
         }
 
+        // Run inference in fp16 (precision-loss allowed). For the CPU/default
+        // delegate this applies XNNPACK FORCE_FP16; for GPU/Metal it toggles the
+        // delegate's fp16 compute path.
+        bool enableFp16 = false;
+        if (count > 4 && arguments[4].isBool()) {
+          enableFp16 = arguments[4].getBool();
+        }
+
         auto promise = Promise::createPromise(runtime, [=, &runtime](
                                                            std::shared_ptr<Promise> promise) {
           // Launch async thread
@@ -221,7 +251,7 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                     });
                     return;
                   }
-                  auto delegate = TFLCreateMetalDelegate();
+                  auto delegate = TFLCreateMetalDelegate(enableFp16);
                   if (delegate != nullptr) {
                     TfLiteInterpreterOptionsAddDelegate(options, delegate);
                   }
@@ -242,7 +272,7 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                   //  - FP16 compute (≈1.5-2x faster on mobile GPUs; minor precision loss)
                   //  - SUSTAINED_SPEED: keep the GPU warm across calls, allow better tuning
                   //  - MIN_LATENCY priority: optimize per-invoke latency
-                  delegateOptions.is_precision_loss_allowed = 1;
+                  delegateOptions.is_precision_loss_allowed = enableFp16 ? 1 : 0;
                   delegateOptions.inference_preference =
                       TFLITE_GPU_INFERENCE_PREFERENCE_SUSTAINED_SPEED;
                   delegateOptions.inference_priority1 = TFLITE_GPU_INFERENCE_PRIORITY_MIN_LATENCY;
@@ -265,7 +295,20 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                 }
 #endif
                 default: {
-                  // use default CPU delegate.
+                  // Default CPU path. When fp16 is requested, attach an XNNPACK
+                  // delegate forcing fp16 compute (fast on ARMv8.2-FP16 CPUs).
+#ifdef ANDROID
+                  if (enableFp16) {
+                    FastTfliteXNNPackDelegateOptions xnnOptions =
+                        TfLiteXNNPackDelegateOptionsDefault();
+                    xnnOptions.num_threads = numThreads;
+                    xnnOptions.flags |= FAST_TFLITE_XNNPACK_FLAG_FORCE_FP16;
+                    auto xnn = TfLiteXNNPackDelegateCreate(&xnnOptions);
+                    if (xnn != nullptr) {
+                      TfLiteInterpreterOptionsAddDelegate(options, xnn);
+                    }
+                  }
+#endif
                 }
               }
 
@@ -374,13 +417,11 @@ std::string TensorflowPlugin::getDelegateHardwareName() const {
   }
 }
 
-InferenceStats TensorflowPlugin::collectDebugStats(double totalMs) {
-  InferenceStats stats;
-  stats.totalTimeMs = totalMs;
-
+std::vector<TensorDebugInfo> TensorflowPlugin::inspectIOTensors() const {
+  std::vector<TensorDebugInfo> tensors;
   std::string delegateHw = getDelegateHardwareName();
 
-  // Helper: collect one tensor into stats
+  // Helper: collect one tensor
   auto collectTensor = [&](const TfLiteTensor* tensor, int reportedIndex) {
     if (tensor == nullptr)
       return;
@@ -414,13 +455,13 @@ InferenceStats TensorflowPlugin::collectDebugStats(double totalMs) {
 #endif
     info.hardware = isDelegateManaged ? delegateHw : "cpu";
 
-    stats.tensors.push_back(std::move(info));
+    tensors.push_back(std::move(info));
   };
 
   // Use only the stable C API — iterate input and output tensors.
   // The experimental TfLiteInterpreterGetOutputTensorIndex API is not used
   // because it can return undefined values on some platforms/versions and
-  // trigger an effectively infinite loop in collectDebugStats.
+  // trigger an effectively infinite loop.
   int inputCount = TfLiteInterpreterGetInputTensorCount(_interpreter);
   for (int i = 0; i < inputCount; i++) {
     collectTensor(TfLiteInterpreterGetInputTensor(_interpreter, i), i);
@@ -430,6 +471,14 @@ InferenceStats TensorflowPlugin::collectDebugStats(double totalMs) {
   for (int i = 0; i < outputCount; i++) {
     collectTensor(TfLiteInterpreterGetOutputTensor(_interpreter, i), inputCount + i);
   }
+
+  return tensors;
+}
+
+InferenceStats TensorflowPlugin::collectDebugStats(double totalMs) {
+  InferenceStats stats;
+  stats.totalTimeMs = totalMs;
+  stats.tensors = inspectIOTensors();
 
   // Copy per-op timings recorded by the telemetry profiler callbacks
   if (_profilerState && !_profilerState->opTimings.empty()) {

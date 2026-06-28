@@ -24,7 +24,8 @@ declare global {
     path: string,
     delegate: TensorflowModelDelegate,
     numThreads: number,
-    debugMode: boolean
+    debugMode: boolean,
+    enableFp16: boolean
   ) => Promise<TensorflowModel>
 }
 // Installs the JSI bindings into the global namespace.
@@ -72,6 +73,20 @@ export interface TensorflowModelOptions {
    * @default false
    */
   enableDebugMode?: boolean
+  /**
+   * Run inference in float16 instead of float32 (precision-loss allowed).
+   *
+   * - CPU (`'default'`): applies an XNNPACK delegate with FORCE_FP16, running
+   *   fp16 SIMD where the CPU supports it (e.g. ARMv8.2-FP16) — can be ~1.5-2x
+   *   faster on capable CPUs. Android only.
+   * - GPU (`'android-gpu'` / `'metal'`): enables the delegate's precision-loss
+   *   (fp16) compute path.
+   * - No effect on `'core-ml'` / `'nnapi'`.
+   *
+   * Trades a small amount of numerical precision for speed; verify accuracy.
+   * @default false
+   */
+  enableFp16?: boolean
 }
 
 /**
@@ -322,22 +337,25 @@ export function loadTensorflowModel(
   let delegate: TensorflowModelDelegate = 'default'
   let numThreads = 1
   let debugMode = false
+  let enableFp16 = false
   if (typeof delegateOrOptions === 'string') {
     delegate = delegateOrOptions
   } else if (typeof delegateOrOptions === 'object') {
     delegate = delegateOrOptions.delegate ?? 'default'
     numThreads = delegateOrOptions.numThreads ?? 1
     debugMode = delegateOrOptions.enableDebugMode ?? false
+    enableFp16 = delegateOrOptions.enableFp16 ?? false
   }
 
   // Use .then() rather than async/await so we never introduce an extra microtask
   // boundary around the JSI HostObject — async functions can cause JSI values to
   // be accessed outside their valid scope in some RN/JSI versions.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (global as any).__loadTensorflowModel(uri, delegate, numThreads, debugMode).then(
-    (nativeModel: TensorflowModel) =>
+  return (global as any)
+    .__loadTensorflowModel(uri, delegate, numThreads, debugMode, enableFp16)
+    .then((nativeModel: TensorflowModel) =>
       debugMode ? wrapWithDebugLogging(nativeModel) : nativeModel
-  )
+    )
 }
 
 /**

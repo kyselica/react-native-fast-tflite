@@ -50,6 +50,28 @@ export interface JumpProcessor {
     inputTensorBytes: number
     snapshotBytes: number
     busy: boolean
+    /**
+     * Sub-step wall-clock timings (ms) of the most recent full-model run, for
+     * benchmarking where inference time goes:
+     *   gather  — snapshotting the ring window (camera thread)
+     *   copyIn  — copying the snapshot into the input tensor
+     *   invoke  — `TfLiteInterpreterInvoke` (the actual GPU/CPU compute)
+     *   copyOut — reading the output tensors back out
+     * Always measured (negligible cost on a ~1 Hz path).
+     */
+    gatherMs: number
+    copyInMs: number
+    invokeMs: number
+    copyOutMs: number
+    /** Delegate the full model is configured to use ("android-gpu", "metal", "core-ml", "nnapi", "cpu"). */
+    delegate: string
+    /**
+     * Hardware placement of the full model's input/output tensors, captured once
+     * after the first run. `hardware === "cpu"` while `delegate` is a GPU delegate
+     * indicates a CPU fallback for that tensor. (Input/output tensors only — the
+     * C API can't enumerate intermediates; per-op detail is iOS-profiler-only.)
+     */
+    ioTensors: { name: string; hardware: string; shape: number[] }[]
   }
 }
 

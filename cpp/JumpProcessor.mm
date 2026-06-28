@@ -116,12 +116,15 @@ void JumpProcessor::pushBackbone(const float* data, size_t length, int64_t /*fra
       if (_busy.compare_exchange_strong(expected, true)) {
         willTrigger = true;
         const int oldestIdx = _writeIndex; // == (writeIdx + 1) % bufferSize
+        const auto gStart = std::chrono::steady_clock::now();
         for (int i = 0; i < bufferSize; i++) {
           const int bufIdx = (oldestIdx + i) % bufferSize;
           std::memcpy(_snapshot.data() + static_cast<size_t>(i) * outputSize,
                       _ring.data() + static_cast<size_t>(bufIdx) * outputSize,
                       outputSize * sizeof(float));
         }
+        const auto gEnd = std::chrono::steady_clock::now();
+        _lastGatherMs.store(std::chrono::duration<double, std::milli>(gEnd - gStart).count());
         _pendingWriteIdx = oldestIdx;
         // Absolute global frame index of the oldest frame now in the window.
         // After this push the window holds frames [totalFrames-bufferSize ..
@@ -233,11 +236,13 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
   // JS buffer's byte length directly with only a DEBUG-time exact-size assert, so
   // we mirror that tolerance instead of hard-failing on any mismatch.
   const size_t copyBytes = std::min(snapshotBytes, tensorBytes);
+  const auto tCopyStart = std::chrono::steady_clock::now();
   TfLiteStatus copyStatus = TfLiteTensorCopyFromBuffer(inputTensor, _snapshot.data(), copyBytes);
   if (copyStatus != kTfLiteOk) {
     _lastSkip.store(CopyFailed);
     return;
   }
+  const auto tInvokeStart = std::chrono::steady_clock::now();
 
   TfLiteStatus status = TfLiteInterpreterInvoke(_interpreter);
   if (status != kTfLiteOk) {
@@ -246,6 +251,9 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
   }
 
   auto t2 = std::chrono::steady_clock::now();
+  // Sub-step breakdown: input copy vs the actual GPU/CPU compute.
+  _lastCopyInMs.store(std::chrono::duration<double, std::milli>(tInvokeStart - tCopyStart).count());
+  _lastInvokeMs.store(std::chrono::duration<double, std::milli>(t2 - tInvokeStart).count());
 
   // Extract periodicities and periods from the configured output tensors.
   const TfLiteTensor* periodicityTensor =
@@ -257,6 +265,19 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
     return;
   }
   _lastSkip.store(Ok);
+
+  // Capture I/O tensor hardware placement once (it's stable across runs). Lets
+  // the benchmark screen show whether the model's tensors are on the GPU
+  // delegate or fell back to the CPU. Done here on the worker thread after a
+  // successful invoke so the interpreter isn't being read concurrently.
+  if (!_hasPlacement.load()) {
+    auto io = _fullModel->inspectIOTensors();
+    {
+      std::lock_guard<std::mutex> lock(_placementMutex);
+      _placement = std::move(io);
+    }
+    _hasPlacement.store(true);
+  }
 
   auto periodicities = std::make_shared<std::vector<float>>(bufferSize, 0.0f);
   auto periods = std::make_shared<std::vector<float>>(bufferSize, 0.0f);
@@ -298,6 +319,9 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
       }
     }
   }
+
+  const auto tCopyOutEnd = std::chrono::steady_clock::now();
+  _lastCopyOutMs.store(std::chrono::duration<double, std::milli>(tCopyOutEnd - t2).count());
 
   const double gatherMs = gatherMsZero;
   const double inferenceMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
@@ -398,6 +422,33 @@ jsi::Value JumpProcessor::get(jsi::Runtime& runtime, const jsi::PropNameID& prop
     obj.setProperty(runtime, "inputTensorBytes", static_cast<double>(_lastInputBytes.load()));
     obj.setProperty(runtime, "snapshotBytes", static_cast<double>(_expectedBytes.load()));
     obj.setProperty(runtime, "busy", _busy.load());
+
+    // Benchmark sub-step timings of the most recent full-model run (ms).
+    obj.setProperty(runtime, "gatherMs", _lastGatherMs.load());
+    obj.setProperty(runtime, "copyInMs", _lastCopyInMs.load());
+    obj.setProperty(runtime, "invokeMs", _lastInvokeMs.load());
+    obj.setProperty(runtime, "copyOutMs", _lastCopyOutMs.load());
+
+    // Configured delegate + I/O tensor hardware placement (cpu vs delegate).
+    obj.setProperty(runtime, "delegate",
+                    jsi::String::createFromUtf8(runtime, _fullModel->delegateHardwareName()));
+    {
+      std::lock_guard<std::mutex> lock(_placementMutex);
+      jsi::Array tensorArr(runtime, _placement.size());
+      for (size_t i = 0; i < _placement.size(); i++) {
+        const auto& t = _placement[i];
+        jsi::Object tObj(runtime);
+        tObj.setProperty(runtime, "name", jsi::String::createFromUtf8(runtime, t.name));
+        tObj.setProperty(runtime, "hardware", jsi::String::createFromUtf8(runtime, t.hardware));
+        jsi::Array shapeArr(runtime, t.shape.size());
+        for (size_t d = 0; d < t.shape.size(); d++) {
+          shapeArr.setValueAtIndex(runtime, d, jsi::Value(static_cast<double>(t.shape[d])));
+        }
+        tObj.setProperty(runtime, "shape", std::move(shapeArr));
+        tensorArr.setValueAtIndex(runtime, i, std::move(tObj));
+      }
+      obj.setProperty(runtime, "ioTensors", std::move(tensorArr));
+    }
     return obj;
   }
 
@@ -422,7 +473,7 @@ std::vector<jsi::PropNameID> JumpProcessor::getPropertyNames(jsi::Runtime& runti
 // changes, so JS can verify the DEVICE is actually running the latest native
 // binary (dev-pod / NDK caches sometimes link stale object files even after a
 // full `expo run`). Read via `global.__jumpProcessorNativeBuild`.
-#define JUMP_PROCESSOR_NATIVE_BUILD "2.0.8-dyninterval"
+#define JUMP_PROCESSOR_NATIVE_BUILD "2.0.8-bench-fp16"
 
 void JumpProcessor::installToRuntime(jsi::Runtime& runtime,
                                      std::shared_ptr<react::CallInvoker> callInvoker) {

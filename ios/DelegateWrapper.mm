@@ -29,14 +29,15 @@ bool TFLIsMetalDelegateAvailable(void) {
 #endif
 }
 
-TfLiteDelegate* TFLCreateMetalDelegate(void) {
+TfLiteDelegate* TFLCreateMetalDelegate(bool allowPrecisionLoss) {
 #if FAST_TFLITE_ENABLE_METAL
-  // Default (FP32) options. FP16 (allow_precision_loss) was tried but gave
-  // negligible speedup on Apple GPUs (Metal already runs efficiently), so it's
-  // not worth the precision loss here. Android keeps FP16 — it's a big win there.
+  // FP32 by default (FP16 gave negligible speedup on Apple GPUs). The benchmark
+  // dev screen can opt into FP16 (allow_precision_loss) to A/B it.
   TFLGpuDelegateOptions options = TFLGpuDelegateOptionsDefault();
+  options.allow_precision_loss = allowPrecisionLoss;
   return TFLGpuDelegateCreate(&options);
 #else
+  (void)allowPrecisionLoss;
   return nullptr;
 #endif
 }
