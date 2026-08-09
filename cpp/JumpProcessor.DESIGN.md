@@ -57,11 +57,25 @@ Installed alongside `__loadTensorflowModel`:
 global.__createJumpProcessor(
   fullModel: TensorflowModel,   // the HostObject from loadTensorflowModel
   config: { bufferSize, outputSize, fullModelInterval,
-            outputTensorPeriodicity, outputTensorPeriod },
+            outputTensorPeriodicity, outputTensorPeriod,
+            outputTensorMarks?, outputTensorEventType?, marksThreshold? },
   onResult: (periodicities: Float32Array, periods: Float32Array,
-             writeIdx: number, gatherTimeMs: number, inferenceTimeMs: number) => void
+             writeIdx: number, gatherTimeMs: number, inferenceTimeMs: number,
+             oldestFrameNumber: number, marks: Float32Array, eventTypes: Float32Array,
+             periodicitiesRope: Float32Array, periodsRope: Float32Array,
+             marksRope: Float32Array) => void
 ): JumpProcessor
 ```
+
+### Output-head layout
+
+Every per-slot head is a slot-major `[1, N, C]` tensor — `value[slot * C + channel]`,
+`N` = `bufferSize`. `C` is inferred at read time (tensor floats / `bufferSize`), so a
+head that gains channels needs no native change. The signal heads (periodicity, period,
+marks) carry **feet on channel 0 and rope on channel 1**; both are delivered — the
+unsuffixed arrays are feet, the `*Rope` arrays rope (empty when the head is
+single-channel). The event-type head is `C` class logits per slot, reduced natively to a
+per-slot argmax so the logits never cross to JS.
 
 `JumpProcessor` methods (all callable from a worklet):
 - `pushBackbone(output: Float32Array, frameNumber: number): void` — store one frame; may

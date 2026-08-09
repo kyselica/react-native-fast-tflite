@@ -30,6 +30,49 @@ static int readIntProp(jsi::Runtime& runtime, const jsi::Object& obj, const char
   return static_cast<int>(v.asNumber());
 }
 
+/**
+ * Split a slot-major [1, N, C] signal head into its feet and rope channels.
+ *
+ * The models emit every per-slot head as `value[slot * C + channel]`; C is
+ * inferred from the tensor's float count so a head that gains channels needs no
+ * native change. `feet` and `rope` are each filled with exactly `bufferSize`
+ * values; a channel the tensor doesn't have is left empty (a head with C == 1
+ * yields feet only). Returns false when the tensor is unusable, leaving both
+ * outputs empty.
+ */
+static bool readSignalChannels(const TfLiteTensor* tensor, int bufferSize, std::vector<float>& feet,
+                               std::vector<float>& rope) {
+  feet.clear();
+  rope.clear();
+  if (tensor == nullptr || bufferSize <= 0)
+    return false;
+
+  const size_t byteSize = TfLiteTensorByteSize(tensor);
+  const size_t floatCount = byteSize / sizeof(float);
+  const int channels = static_cast<int>(floatCount / static_cast<size_t>(bufferSize));
+  if (channels <= 0)
+    return false;
+
+  std::vector<float> raw(floatCount);
+  if (TfLiteTensorCopyToBuffer(tensor, raw.data(), byteSize) != kTfLiteOk)
+    return false;
+
+  const auto extract = [&](int channel, std::vector<float>& out) {
+    if (channel >= channels)
+      return;
+    out.assign(bufferSize, 0.0f);
+    for (int i = 0; i < bufferSize; i++) {
+      const size_t idx = static_cast<size_t>(i) * channels + channel;
+      if (idx >= floatCount)
+        break;
+      out[i] = raw[idx];
+    }
+  };
+  extract(kJumpChannelFeet, feet);
+  extract(kJumpChannelRope, rope);
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Construction / teardown
 // ---------------------------------------------------------------------------
@@ -279,43 +322,65 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
     _hasPlacement.store(true);
   }
 
+  // Every signal head is slot-major [1, N, C] with the feet channel first and
+  // the rope channel second (see readSignalChannels). Both channels are
+  // delivered: the feet arrays drive counting today, the rope arrays let JS pick
+  // up the rope signal without another native rebuild.
   auto periodicities = std::make_shared<std::vector<float>>(bufferSize, 0.0f);
   auto periods = std::make_shared<std::vector<float>>(bufferSize, 0.0f);
+  auto periodicitiesRope = std::make_shared<std::vector<float>>();
+  auto periodsRope = std::make_shared<std::vector<float>>();
+  readSignalChannels(periodicityTensor, bufferSize, *periodicities, *periodicitiesRope);
+  readSignalChannels(periodTensor, bufferSize, *periods, *periodsRope);
+  // readSignalChannels leaves feet empty on an unusable tensor; keep the
+  // delivered length at bufferSize so JS never sees a short array.
+  if (periodicities->empty())
+    periodicities->assign(bufferSize, 0.0f);
+  if (periods->empty())
+    periods->assign(bufferSize, 0.0f);
 
-  // Periodicity tensor: bufferSize floats. Period tensor: interleaved 2/slot,
-  // take the first of each pair (matches the JS interpreter's periodsRaw[i*2]).
-  {
-    const size_t pByteSize = TfLiteTensorByteSize(periodicityTensor);
-    std::vector<float> pRaw(pByteSize / sizeof(float));
-    TfLiteTensorCopyToBuffer(periodicityTensor, pRaw.data(), pByteSize);
-    for (int i = 0; i < bufferSize && i < static_cast<int>(pRaw.size()); i++) {
-      (*periodicities)[i] = pRaw[i];
-    }
-  }
-  {
-    const size_t prByteSize = TfLiteTensorByteSize(periodTensor);
-    std::vector<float> prRaw(prByteSize / sizeof(float));
-    TfLiteTensorCopyToBuffer(periodTensor, prRaw.data(), prByteSize);
-    for (int i = 0; i < bufferSize; i++) {
-      const size_t idx = static_cast<size_t>(i) * 2;
-      if (idx < prRaw.size())
-        (*periods)[i] = prRaw[idx];
-    }
-  }
-
-  // Optional marks tensor ([1,N,1], one scalar/slot). Empty when not configured
-  // (-1); JS then falls back to period-only counting.
+  // Optional marks tensor. Empty when not configured (-1); JS then falls back to
+  // period-only counting.
   auto marks = std::make_shared<std::vector<float>>();
+  auto marksRope = std::make_shared<std::vector<float>>();
   if (_config.outputTensorMarks >= 0) {
     const TfLiteTensor* marksTensor =
         TfLiteInterpreterGetOutputTensor(_interpreter, _config.outputTensorMarks);
-    if (marksTensor != nullptr) {
-      marks->assign(bufferSize, 0.0f);
-      const size_t mByteSize = TfLiteTensorByteSize(marksTensor);
-      std::vector<float> mRaw(mByteSize / sizeof(float));
-      TfLiteTensorCopyToBuffer(marksTensor, mRaw.data(), mByteSize);
-      for (int i = 0; i < bufferSize && i < static_cast<int>(mRaw.size()); i++) {
-        (*marks)[i] = mRaw[i];
+    readSignalChannels(marksTensor, bufferSize, *marks, *marksRope);
+  }
+
+  // Optional event-type tensor ([1,N,C], C class logits per slot). Empty when
+  // not configured (-1). We take the per-slot argmax here (native) and deliver
+  // one class index per slot — the raw logits never cross to JS. C is inferred
+  // from the tensor size / bufferSize; layout is slot-major (logits[i*C + c]),
+  // same as the signal heads (see readSignalChannels) — here every channel is
+  // read, not just one.
+  auto eventTypes = std::make_shared<std::vector<float>>();
+  if (_config.outputTensorEventType >= 0) {
+    const TfLiteTensor* eventTypeTensor =
+        TfLiteInterpreterGetOutputTensor(_interpreter, _config.outputTensorEventType);
+    if (eventTypeTensor != nullptr && bufferSize > 0) {
+      eventTypes->assign(bufferSize, 0.0f);
+      const size_t eByteSize = TfLiteTensorByteSize(eventTypeTensor);
+      std::vector<float> eRaw(eByteSize / sizeof(float));
+      TfLiteTensorCopyToBuffer(eventTypeTensor, eRaw.data(), eByteSize);
+      const int numClasses = static_cast<int>(eRaw.size()) / bufferSize;
+      if (numClasses > 0) {
+        for (int i = 0; i < bufferSize; i++) {
+          const size_t base = static_cast<size_t>(i) * numClasses;
+          if (base + numClasses > eRaw.size())
+            break;
+          int argmax = 0;
+          float best = eRaw[base];
+          for (int c = 1; c < numClasses; c++) {
+            const float v = eRaw[base + c];
+            if (v > best) {
+              best = v;
+              argmax = c;
+            }
+          }
+          (*eventTypes)[i] = static_cast<float>(argmax);
+        }
       }
     }
   }
@@ -331,8 +396,9 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
   auto onResult = _onResult;
   auto callInvoker = _callInvoker;
   auto* self = this;
-  callInvoker->invokeAsync([self, onResult, periodicities, periods, marks, writeIdx,
-                            oldestFrameNumber, gatherMs, inferenceMs, generation]() {
+  callInvoker->invokeAsync([self, onResult, periodicities, periods, marks, eventTypes,
+                            periodicitiesRope, periodsRope, marksRope, writeIdx, oldestFrameNumber,
+                            gatherMs, inferenceMs, generation]() {
     if (self->_stop.load())
       return;
     if (generation != self->_generation.load())
@@ -350,7 +416,9 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
     try {
       onResult->call(rt, toFloat32Array(*periodicities), toFloat32Array(*periods),
                      jsi::Value(writeIdx), jsi::Value(gatherMs), jsi::Value(inferenceMs),
-                     jsi::Value(static_cast<double>(oldestFrameNumber)), toFloat32Array(*marks));
+                     jsi::Value(static_cast<double>(oldestFrameNumber)), toFloat32Array(*marks),
+                     toFloat32Array(*eventTypes), toFloat32Array(*periodicitiesRope),
+                     toFloat32Array(*periodsRope), toFloat32Array(*marksRope));
       self->_runsCompleted.fetch_add(1);
     } catch (jsi::JSError& e) {
       // A JS callback error must not crash the app. Record it so the failure
@@ -473,7 +541,7 @@ std::vector<jsi::PropNameID> JumpProcessor::getPropertyNames(jsi::Runtime& runti
 // changes, so JS can verify the DEVICE is actually running the latest native
 // binary (dev-pod / NDK caches sometimes link stale object files even after a
 // full `expo run`). Read via `global.__jumpProcessorNativeBuild`.
-#define JUMP_PROCESSOR_NATIVE_BUILD "2.0.8-bench-fp16"
+#define JUMP_PROCESSOR_NATIVE_BUILD "2.2.0-feet-rope-channels"
 
 void JumpProcessor::installToRuntime(jsi::Runtime& runtime,
                                      std::shared_ptr<react::CallInvoker> callInvoker) {
@@ -513,6 +581,11 @@ void JumpProcessor::installToRuntime(jsi::Runtime& runtime,
         {
           jsi::Value mv = cfgObj.getProperty(rt, "outputTensorMarks");
           config.outputTensorMarks = mv.isNumber() ? static_cast<int>(mv.asNumber()) : -1;
+        }
+        // Optional: event-type output tensor index (-1 / absent = no event type).
+        {
+          jsi::Value ev = cfgObj.getProperty(rt, "outputTensorEventType");
+          config.outputTensorEventType = ev.isNumber() ? static_cast<int>(ev.asNumber()) : -1;
         }
 
         // arg2: onResult callback

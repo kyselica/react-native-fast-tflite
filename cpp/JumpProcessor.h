@@ -30,6 +30,21 @@
 using namespace facebook;
 
 /**
+ * Per-slot output-head layout. Every head of the jump models is a slot-major
+ * tensor [1, N, C]: N = bufferSize slots, C channels per slot, laid out
+ * `value[slot * C + channel]`. C is inferred at read time from the tensor's
+ * float count / bufferSize, so a head gaining channels never needs a native
+ * change — only a channel constant here (or a new config field) to read it.
+ *
+ * The signal heads (periodicity, period, marks) carry one channel per tracked
+ * body: feet first, then rope.
+ */
+enum JumpSignalChannel : int {
+  kJumpChannelFeet = 0,
+  kJumpChannelRope = 1,
+};
+
+/**
  * Configuration for the jump-detection ring + full-model run. Mirrors the
  * subset of the JS processor config the native side needs.
  */
@@ -39,9 +54,14 @@ struct JumpProcessorConfig {
   int fullModelInterval = 0;       // run full model every N frames
   int outputTensorPeriodicity = 0; // index of periodicity output tensor
   int outputTensorPeriod = 0;      // index of period output tensor
-  // Index of the per-frame "marks" output tensor ([1,N,1]); -1 = model has no
+  // Index of the per-frame "marks" output tensor ([1,N,C]); -1 = model has no
   // marks output (marks then delivered as zeros; JS falls back to period-only).
   int outputTensorMarks = -1;
+  // Index of the per-frame "event type" output tensor ([1,N,C], C class logits
+  // per slot); -1 = model has no event-type output (event types then delivered
+  // as an empty array). Native takes the per-slot argmax and delivers the class
+  // index; the raw logits never cross to JS.
+  int outputTensorEventType = -1;
 };
 
 /**
