@@ -1,7 +1,8 @@
 #ifdef RCT_NEW_ARCH_ENABLED
 
 #import "RNTfliteSpec.h"
-@interface Tflite : NSObject <NativeRNTfliteSpec>
+#import <ReactCommon/RCTTurboModuleWithJSIBindings.h>
+@interface Tflite : NSObject <NativeRNTfliteSpec, RCTTurboModuleWithJSIBindings>
 @end
 
 #else

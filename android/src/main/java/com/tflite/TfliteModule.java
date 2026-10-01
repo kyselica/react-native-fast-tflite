@@ -130,6 +130,15 @@ public class TfliteModule extends ReactContextBaseJavaModule {
     }
   }
 
+  private static CallInvokerHolderImpl getCallInvoker(ReactApplicationContext context) throws Exception {
+    try {
+      // Reflection preserves compilation with RN 0.73 while supporting bridgeless contexts.
+      return (CallInvokerHolderImpl) context.getClass().getMethod("getJSCallInvokerHolder").invoke(context);
+    } catch (NoSuchMethodException exception) {
+      return (CallInvokerHolderImpl) context.getCatalystInstance().getJSCallInvokerHolder();
+    }
+  }
+
   @ReactMethod(isBlockingSynchronousMethod = true)
   public boolean install() {
     try {
@@ -139,10 +148,7 @@ public class TfliteModule extends ReactContextBaseJavaModule {
       ReactApplicationContext context = getReactApplicationContext();
       JavaScriptContextHolder jsContext = context.getJavaScriptContextHolder();
 
-      // getJSCallInvokerHolder() works for both old and new architecture.
-      // Old arch: delegates to getCatalystInstance().getJSCallInvokerHolder()
-      // New arch (bridgeless): overridden in BridgelessReactContext to return the host's invoker
-      CallInvokerHolderImpl callInvoker = (CallInvokerHolderImpl) context.getJSCallInvokerHolder();
+      CallInvokerHolderImpl callInvoker = getCallInvoker(context);
 
       Log.i(NAME, "Installing JSI Bindings for VisionCamera Tflite plugin...");
       boolean successful = nativeInstall(jsContext.get(), callInvoker);

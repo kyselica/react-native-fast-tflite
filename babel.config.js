@@ -6,4 +6,4 @@ module.exports = {
     // Strip Flow types from react-native and @react-native packages
     ['@babel/preset-flow', { all: true }],
   ],
-};
+}

@@ -42,10 +42,6 @@ jobs:
       - name: Install node_modules for example/
         run: yarn install --frozen-lockfile --cwd ..
 
-      - name: Restore buildcache
-        uses: mikehardy/buildcache-action@v2
-        continue-on-error: true
-
       - name: Setup Ruby (bundle)
         uses: ruby/setup-ruby@v1
         with:
@@ -69,7 +65,7 @@ jobs:
         run: gem install xcpretty
       - name: Build App
         run: "set -o pipefail && xcodebuild \
-          CC=clang CPLUSPLUS=clang++ LD=clang LDPLUSPLUS=clang++ \
+          -toolchain com.apple.dt.toolchain.XcodeDefault \
           -derivedDataPath build -UseModernBuildSystem=YES \
           -workspace TfliteExample.xcworkspace \
           -scheme TfliteExample \
@@ -77,4 +73,18 @@ jobs:
           -configuration Debug \
           -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
           build \
-          CODE_SIGNING_ALLOWED=NO | xcpretty"
+          CODE_SIGNING_ALLOWED=NO 2>&1 | tee xcodebuild.log | xcpretty"
+
+      - name: Show raw failure diagnostics
+        if: failure()
+        run: |
+          grep -n -A 35 -B 5 -E 'Undefined symbols|error:|ld:' xcodebuild.log || true
+          tail -n 30 xcodebuild.log
+
+      - name: Upload raw build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: example/ios/xcodebuild.log
+          if-no-files-found: ignore

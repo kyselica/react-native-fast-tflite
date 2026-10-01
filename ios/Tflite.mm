@@ -2,30 +2,27 @@
 #import "../cpp/JumpProcessor.h"
 #import "../cpp/TensorflowPlugin.h"
 #import <React-callinvoker/ReactCommon/CallInvoker.h>
+#ifndef RCT_NEW_ARCH_ENABLED
 #import <React/RCTBridge+Private.h>
+#endif
 #import <jsi/jsi.h>
 #import <string>
 
-// This is defined in RCTTurboModule.h.
-// for future versions of React we might need to figure out another approach to get the
-// JSCallInvoker!
+#ifndef RCT_NEW_ARCH_ENABLED
 @interface RCTBridge (RCTTurboModule)
 - (std::shared_ptr<facebook::react::CallInvoker>)jsCallInvoker;
 @end
+#endif
 
 using namespace facebook;
 
-@implementation Tflite
+@implementation Tflite {
+  BOOL _bindingsInstalled;
+}
 RCT_EXPORT_MODULE(Tflite)
 
-- (NSNumber *)install {
-  RCTBridge* bridge = [RCTBridge currentBridge];
-  RCTCxxBridge* cxxBridge = (RCTCxxBridge*)bridge;
-  if (!cxxBridge.runtime) {
-    return @(false);
-  }
-  jsi::Runtime& runtime = *(jsi::Runtime*)cxxBridge.runtime;
-
+- (BOOL)installBindingsWithRuntime:(jsi::Runtime&)runtime
+                       callInvoker:(const std::shared_ptr<react::CallInvoker>&)callInvoker {
   auto fetchByteDataFromUrl = [](std::string url) {
     NSString* string = [NSString stringWithUTF8String:url.c_str()];
     NSLog(@"Fetching %@...", string);
@@ -38,18 +35,37 @@ RCT_EXPORT_MODULE(Tflite)
   };
 
   try {
-    TensorflowPlugin::installToRuntime(runtime, [bridge jsCallInvoker], fetchByteDataFromUrl);
-    JumpProcessor::installToRuntime(runtime, [bridge jsCallInvoker]);
+    TensorflowPlugin::installToRuntime(runtime, callInvoker, fetchByteDataFromUrl);
+    JumpProcessor::installToRuntime(runtime, callInvoker);
   } catch (std::exception& exc) {
     NSLog(@"Failed to install TensorFlow Lite plugin to Runtime! %s", exc.what());
-    return @(false);
+    return NO;
   }
 
-  return @(true);
+  return YES;
 }
 
-// Don't compile this code when we build for the old architecture.
+- (NSNumber*)install {
 #ifdef RCT_NEW_ARCH_ENABLED
+  // React Native installs bindings when it creates this TurboModule, before JS calls install().
+  return @(_bindingsInstalled);
+#else
+  RCTBridge* bridge = [RCTBridge currentBridge];
+  RCTCxxBridge* cxxBridge = (RCTCxxBridge*)bridge;
+  if (!cxxBridge.runtime) {
+    return @(NO);
+  }
+  jsi::Runtime& runtime = *(jsi::Runtime*)cxxBridge.runtime;
+  return @([self installBindingsWithRuntime:runtime callInvoker:[bridge jsCallInvoker]]);
+#endif
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)installJSIBindingsWithRuntime:(jsi::Runtime&)runtime
+                          callInvoker:(const std::shared_ptr<react::CallInvoker>&)callInvoker {
+  _bindingsInstalled = [self installBindingsWithRuntime:runtime callInvoker:callInvoker];
+}
+
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams&)params {
   return std::make_shared<facebook::react::NativeRNTfliteSpecJSI>(params);
