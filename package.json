@@ -1,6 +1,6 @@
 {
   "name": "@kyselicaa/react-native-fast-tflite",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "High-performance TensorFlow Lite library for React Native",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",

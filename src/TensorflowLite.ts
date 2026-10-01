@@ -33,8 +33,7 @@ console.log('Installing bindings...')
 const result = TensorflowModule.install() as boolean
 if (result !== true)
   console.error('Failed to install Tensorflow Lite bindings!')
-
-console.log('Successfully installed!')
+else console.log('Successfully installed!')
 
 export type TensorflowModelDelegate =
   | 'default'
