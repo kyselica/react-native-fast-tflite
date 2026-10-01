@@ -42,10 +42,6 @@ jobs:
       - name: Install node_modules for example/
         run: yarn install --frozen-lockfile --cwd ..
 
-      - name: Restore buildcache
-        uses: mikehardy/buildcache-action@v2
-        continue-on-error: true
-
       - name: Setup Ruby (bundle)
         uses: ruby/setup-ruby@v1
         with:
@@ -69,7 +65,7 @@ jobs:
         run: gem install xcpretty
       - name: Build App
         run: "set -o pipefail && xcodebuild \
-          CC=clang CPLUSPLUS=clang++ LD=clang LDPLUSPLUS=clang++ \
+          -toolchain com.apple.dt.toolchain.XcodeDefault \
           -derivedDataPath build -UseModernBuildSystem=YES \
           -workspace TfliteExample.xcworkspace \
           -scheme TfliteExample \
