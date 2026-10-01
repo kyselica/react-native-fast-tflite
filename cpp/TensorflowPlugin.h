@@ -95,8 +95,7 @@ public:
 
 public:
   explicit TensorflowPlugin(TfLiteInterpreter* interpreter, Buffer model, Delegate delegate,
-                            std::shared_ptr<react::CallInvoker> callInvoker,
-                            bool debugMode = false,
+                            std::shared_ptr<react::CallInvoker> callInvoker, bool debugMode = false,
                             std::shared_ptr<TensorflowProfilerState> profilerState = nullptr);
   ~TensorflowPlugin();
 
@@ -117,11 +116,15 @@ public:
    * alive for as long as they use the interpreter (JumpProcessor holds a
    * shared_ptr to the plugin to guarantee this).
    */
-  TfLiteInterpreter* getInterpreter() const { return _interpreter; }
+  TfLiteInterpreter* getInterpreter() const {
+    return _interpreter;
+  }
 
   /** Hardware the configured delegate runs on
    * ("metal", "core-ml", "nnapi", "android-gpu", or "cpu"). */
-  std::string delegateHardwareName() const { return getDelegateHardwareName(); }
+  std::string delegateHardwareName() const {
+    return getDelegateHardwareName();
+  }
 
   /**
    * Scan the model's input/output compute tensors and report their hardware
@@ -148,12 +151,10 @@ private:
   // Telemetry profiler callbacks (iOS only — no-ops on Android)
 #ifndef ANDROID
   static uint32_t profilerBeginOp(struct TfLiteTelemetryProfilerStruct* profiler,
-                                   const char* op_name, int64_t op_idx, int64_t subgraph_idx);
-  static void profilerEndOp(struct TfLiteTelemetryProfilerStruct* profiler,
-                             uint32_t event_handle);
-  static void profilerOpEvent(struct TfLiteTelemetryProfilerStruct* profiler,
-                               const char* op_name, uint64_t elapsed_us,
-                               int64_t op_idx, int64_t subgraph_idx);
+                                  const char* op_name, int64_t op_idx, int64_t subgraph_idx);
+  static void profilerEndOp(struct TfLiteTelemetryProfilerStruct* profiler, uint32_t event_handle);
+  static void profilerOpEvent(struct TfLiteTelemetryProfilerStruct* profiler, const char* op_name,
+                              uint64_t elapsed_us, int64_t op_idx, int64_t subgraph_idx);
 #endif
 
 private:

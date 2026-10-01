@@ -295,8 +295,8 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                 }
 #endif
                 default: {
-                  // Default CPU path. When fp16 is requested, attach an XNNPACK
-                  // delegate forcing fp16 compute (fast on ARMv8.2-FP16 CPUs).
+              // Default CPU path. When fp16 is requested, attach an XNNPACK
+              // delegate forcing fp16 compute (fast on ARMv8.2-FP16 CPUs).
 #ifdef ANDROID
                   if (enableFp16) {
                     FastTfliteXNNPackDelegateOptions xnnOptions =

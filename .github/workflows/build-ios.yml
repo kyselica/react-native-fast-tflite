@@ -77,4 +77,16 @@ jobs:
           -configuration Debug \
           -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
           build \
-          CODE_SIGNING_ALLOWED=NO | xcpretty"
+          CODE_SIGNING_ALLOWED=NO | tee xcodebuild.log | xcpretty"
+
+      - name: Show raw failure diagnostics
+        if: failure()
+        run: tail -n 160 xcodebuild.log
+
+      - name: Upload raw build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: example/ios/xcodebuild.log
+          if-no-files-found: ignore

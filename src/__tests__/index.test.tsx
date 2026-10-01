@@ -23,7 +23,9 @@ import {
 
 const FAKE_OUTPUT = new Float32Array([0.1, 0.9])
 
-function makeFakeStats(overrides: Partial<InferenceStats> = {}): InferenceStats {
+function makeFakeStats(
+  overrides: Partial<InferenceStats> = {}
+): InferenceStats {
   return {
     totalTimeMs: 12.345,
     tensors: [
@@ -39,12 +41,14 @@ function makeFakeStats(overrides: Partial<InferenceStats> = {}): InferenceStats 
 }
 
 /** Build a minimal TensorflowModel mock */
-function makeFakeNativeModel(options: {
-  delegate?: TensorflowModel['delegate']
-  stats?: InferenceStats | undefined
-  runSyncImpl?: (input: unknown[]) => unknown[]
-  runImpl?: (input: unknown[]) => Promise<unknown[]>
-} = {}): TensorflowModel {
+function makeFakeNativeModel(
+  options: {
+    delegate?: TensorflowModel['delegate']
+    stats?: InferenceStats | undefined
+    runSyncImpl?: (input: unknown[]) => unknown[]
+    runImpl?: (input: unknown[]) => Promise<unknown[]>
+  } = {}
+): TensorflowModel {
   let lastStats: InferenceStats | undefined = options.stats
 
   const model: TensorflowModel = {
@@ -55,15 +59,15 @@ function makeFakeNativeModel(options: {
       return lastStats
     },
     runSync(input: unknown[]) {
-      const result = options.runSyncImpl ? options.runSyncImpl(input) : [FAKE_OUTPUT]
+      const result =
+        options.runSyncImpl != null ? options.runSyncImpl(input) : [FAKE_OUTPUT]
       // Simulate native side populating stats after invoke
       lastStats = makeFakeStats()
       return result as ReturnType<TensorflowModel['runSync']>
     },
     async run(input: unknown[]) {
-      const result = options.runImpl
-        ? await options.runImpl(input)
-        : [FAKE_OUTPUT]
+      const result =
+        options.runImpl != null ? await options.runImpl(input) : [FAKE_OUTPUT]
       lastStats = makeFakeStats()
       return result as Awaited<ReturnType<TensorflowModel['run']>>
     },
@@ -93,7 +97,7 @@ beforeEach(() => {
   ;(global as any).__loadTensorflowModel = jest.fn(() =>
     Promise.resolve(fakeNativeModel)
   )
-  jest.spyOn(console, 'log').mockImplementation(() => {})
+  jest.spyOn(console, 'log').mockImplementation(() => undefined)
 })
 
 afterEach(() => {
@@ -228,8 +232,8 @@ describe('debug wrapper — runSync', () => {
     expect(model.stats).toBeUndefined()
     model.runSync([new Float32Array([1, 2, 3, 4])])
     expect(model.stats).toBeDefined()
-    expect(model.stats!.totalTimeMs).toBe(12.345)
-    expect(model.stats!.tensors).toHaveLength(2)
+    expect(model.stats?.totalTimeMs).toBe(12.345)
+    expect(model.stats?.tensors).toHaveLength(2)
   })
 
   it('logs a summary line and one line per tensor to console after runSync', async () => {
@@ -240,7 +244,9 @@ describe('debug wrapper — runSync', () => {
     model.runSync([new Float32Array([1, 2, 3, 4])])
 
     const logs = (console.log as jest.Mock).mock.calls.map((c) => c[0])
-    const tfliteLogs = logs.filter((l) => typeof l === 'string' && l.startsWith('[TFLite]'))
+    const tfliteLogs = logs.filter(
+      (l) => typeof l === 'string' && l.startsWith('[TFLite]')
+    )
 
     // Summary line
     expect(tfliteLogs[0]).toMatch(/Inference:.*12\.345ms/)
@@ -255,7 +261,9 @@ describe('debug wrapper — runSync', () => {
     model.runSync([new Float32Array([1, 2, 3, 4])])
 
     const logs = (console.log as jest.Mock).mock.calls.map((c) => c[0])
-    const tfliteLogs = logs.filter((l) => typeof l === 'string' && l.startsWith('[TFLite]'))
+    const tfliteLogs = logs.filter(
+      (l) => typeof l === 'string' && l.startsWith('[TFLite]')
+    )
     expect(tfliteLogs).toHaveLength(0)
   })
 })
@@ -277,7 +285,7 @@ describe('debug wrapper — run (async)', () => {
     )
     await model.run([new Float32Array([1, 2, 3, 4])])
     expect(model.stats).toBeDefined()
-    expect(model.stats!.totalTimeMs).toBe(12.345)
+    expect(model.stats?.totalTimeMs).toBe(12.345)
   })
 
   it('logs after run resolves', async () => {
@@ -288,7 +296,9 @@ describe('debug wrapper — run (async)', () => {
     await model.run([new Float32Array([1, 2, 3, 4])])
 
     const logs = (console.log as jest.Mock).mock.calls.map((c) => c[0])
-    const tfliteLogs = logs.filter((l) => typeof l === 'string' && l.startsWith('[TFLite]'))
+    const tfliteLogs = logs.filter(
+      (l) => typeof l === 'string' && l.startsWith('[TFLite]')
+    )
     expect(tfliteLogs.length).toBeGreaterThanOrEqual(1)
     expect(tfliteLogs[0]).toMatch(/Inference:.*12\.345ms/)
   })
@@ -323,7 +333,6 @@ describe('debug wrapper — CPU fallback detection', () => {
     Object.defineProperty(fakeNativeModel, 'stats', {
       get: () => capturedStats,
     })
-
     ;(global as any).__loadTensorflowModel = jest.fn(() =>
       Promise.resolve(fakeNativeModel)
     )
@@ -334,7 +343,9 @@ describe('debug wrapper — CPU fallback detection', () => {
     )
     model.runSync([new Float32Array([1, 2, 3, 4])])
 
-    const logs = (console.log as jest.Mock).mock.calls.map((c) => c[0] as string)
+    const logs = (console.log as jest.Mock).mock.calls.map(
+      (c) => c[0] as string
+    )
     const fallbackLine = logs.find((l) => l.includes('unsupported_op'))
     expect(fallbackLine).toBeDefined()
     expect(fallbackLine).toMatch(/⚠/)

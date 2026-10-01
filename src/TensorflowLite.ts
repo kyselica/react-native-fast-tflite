@@ -30,8 +30,8 @@ declare global {
 }
 // Installs the JSI bindings into the global namespace.
 console.log('Installing bindings...')
-const result = TensorflowModule.install() as boolean
-if (result !== true)
+const installationResult = TensorflowModule.install() as boolean
+if (installationResult !== true)
   console.error('Failed to install Tensorflow Lite bindings!')
 else console.log('Successfully installed!')
 
@@ -238,7 +238,7 @@ export type TensorflowPlugin =
 
 function printStats(model: TensorflowModel): void {
   const stats = model.stats
-  if (!stats) return
+  if (stats === undefined) return
   const delegateName = model.delegate
 
   let cpuCount = 0
@@ -261,10 +261,11 @@ function printStats(model: TensorflowModel): void {
   }
 
   // Per-op timing (iOS only; empty on Android)
-  if (stats.opTimings && stats.opTimings.length > 0) {
+  if (stats.opTimings !== undefined && stats.opTimings.length > 0) {
     console.log(`[TFLite] Per-op timings (${stats.opTimings.length} ops):`)
     for (const op of stats.opTimings) {
-      console.log(`[TFLite]   op[${op.opIdx}] '${op.name}' ${op.durationMs.toFixed(3)}ms`)
+      const message = `[TFLite]   op[${op.opIdx}] '${op.name}' ${op.durationMs.toFixed(3)}ms`
+      console.log(message)
     }
   }
 }

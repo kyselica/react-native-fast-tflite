@@ -21,8 +21,8 @@ using namespace facebook;
 }
 RCT_EXPORT_MODULE(Tflite)
 
-- (BOOL)installBindingsWithRuntime:(jsi::Runtime &)runtime
-                      callInvoker:(const std::shared_ptr<react::CallInvoker> &)callInvoker {
+- (BOOL)installBindingsWithRuntime:(jsi::Runtime&)runtime
+                       callInvoker:(const std::shared_ptr<react::CallInvoker>&)callInvoker {
   auto fetchByteDataFromUrl = [](std::string url) {
     NSString* string = [NSString stringWithUTF8String:url.c_str()];
     NSLog(@"Fetching %@...", string);
@@ -45,24 +45,24 @@ RCT_EXPORT_MODULE(Tflite)
   return YES;
 }
 
-- (NSNumber *)install {
+- (NSNumber*)install {
 #ifdef RCT_NEW_ARCH_ENABLED
   // React Native installs bindings when it creates this TurboModule, before JS calls install().
   return @(_bindingsInstalled);
 #else
-  RCTBridge *bridge = [RCTBridge currentBridge];
-  RCTCxxBridge *cxxBridge = (RCTCxxBridge *)bridge;
+  RCTBridge* bridge = [RCTBridge currentBridge];
+  RCTCxxBridge* cxxBridge = (RCTCxxBridge*)bridge;
   if (!cxxBridge.runtime) {
     return @(NO);
   }
-  jsi::Runtime &runtime = *(jsi::Runtime *)cxxBridge.runtime;
+  jsi::Runtime& runtime = *(jsi::Runtime*)cxxBridge.runtime;
   return @([self installBindingsWithRuntime:runtime callInvoker:[bridge jsCallInvoker]]);
 #endif
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
-- (void)installJSIBindingsWithRuntime:(jsi::Runtime &)runtime
-                        callInvoker:(const std::shared_ptr<react::CallInvoker> &)callInvoker {
+- (void)installJSIBindingsWithRuntime:(jsi::Runtime&)runtime
+                          callInvoker:(const std::shared_ptr<react::CallInvoker>&)callInvoker {
   _bindingsInstalled = [self installBindingsWithRuntime:runtime callInvoker:callInvoker];
 }
 
