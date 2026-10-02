@@ -11,6 +11,7 @@
 #include "TensorHelpers.h"
 #include "jsi/Promise.h"
 #include "jsi/TypedArray.h"
+#include <react/bridging/LongLivedObject.h>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
@@ -151,6 +152,16 @@ static void profilerNoOpSettings(TfLiteTelemetryProfilerStruct*, const char*,
 
 #endif // !ANDROID
 
+// The runtime owns JS promise callbacks. Workers only retain a weak reference,
+// so a reload can release those callbacks on the JS thread while a load is pending.
+class PendingModelLoad final : public react::LongLivedObject {
+public:
+  PendingModelLoad(jsi::Runtime& runtime, std::shared_ptr<Promise> promise)
+      : LongLivedObject(runtime), promise(std::move(promise)) {}
+
+  std::shared_ptr<Promise> promise;
+};
+
 void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                                         std::shared_ptr<react::CallInvoker> callInvoker,
                                         FetchURLFunc fetchURL) {
@@ -200,147 +211,157 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
 
         auto promise = Promise::createPromise(runtime, [=, &runtime](
                                                            std::shared_ptr<Promise> promise) {
-          // Launch async thread
-          std::async(std::launch::async, [=, &runtime]() {
-            try {
-              // Fetch model from URL (JS bundle)
-              Buffer buffer = fetchURL(modelPath);
-
-              // Load Model into Tensorflow
-              auto model = TfLiteModelCreate(buffer.data, buffer.size);
-              if (model == nullptr) {
-                callInvoker->invokeAsync(
-                    [=]() { promise->reject("Failed to load model from \"" + modelPath + "\"!"); });
-                return;
+          auto pending = std::make_shared<PendingModelLoad>(runtime, std::move(promise));
+          react::LongLivedObjectCollection::get(runtime).add(pending);
+          std::weak_ptr<PendingModelLoad> weakPending = pending;
+          auto reject = [callInvoker, weakPending](std::string message) {
+            callInvoker->invokeAsync([weakPending, message = std::move(message)](jsi::Runtime&) {
+              if (auto pending = weakPending.lock()) {
+                pending->allowRelease();
+                pending->promise->reject(message);
               }
+            });
+          };
 
-              // Create TensorFlow Interpreter
-              auto options = TfLiteInterpreterOptionsCreate();
-              TfLiteInterpreterOptionsSetNumThreads(options, numThreads);
+          // A discarded std::async future waits for completion in its destructor.
+          // An independent worker lets JS timers, navigation and CPU recovery run
+          // even if a driver never returns. Never capture JSI values on this thread.
+          try {
+            std::thread([fetchURL, modelPath, delegateType, numThreads, debugMode,
+                         enableFp16, callInvoker, weakPending, reject, start]() {
+              try {
+                // Fetch model from URL (JS bundle)
+                Buffer buffer = fetchURL(modelPath);
 
-              switch (delegateType) {
+                // Load Model into Tensorflow
+                auto model = TfLiteModelCreate(buffer.data, buffer.size);
+                if (model == nullptr) {
+                  reject("Failed to load model from \"" + modelPath + "\"!");
+                  return;
+                }
+
+                // Create TensorFlow Interpreter
+                auto options = TfLiteInterpreterOptionsCreate();
+                TfLiteInterpreterOptionsSetNumThreads(options, numThreads);
+
+                switch (delegateType) {
 #ifdef ANDROID
-                case Delegate::CoreML: {
-                  callInvoker->invokeAsync(
-                      [=]() { promise->reject("CoreML Delegate is only supported on iOS!"); });
-                  return;
-                }
-                case Delegate::Metal: {
-                  callInvoker->invokeAsync(
-                      [=]() { promise->reject("Metal Delegate is only supported on iOS!"); });
-                  return;
-                }
-#else
-                case Delegate::CoreML: {
-                  if (!TFLIsCoreMLDelegateAvailable()) {
-                    callInvoker->invokeAsync([=]() {
-                      promise->reject("CoreML Delegate is not enabled! Set $EnableCoreMLDelegate to true in Podfile and rebuild.");
-                    });
+                  case Delegate::CoreML: {
+                    reject("CoreML Delegate is only supported on iOS!");
                     return;
                   }
-                  auto delegate = TFLCreateCoreMLDelegate();
-                  if (delegate != nullptr) {
-                    TfLiteInterpreterOptionsAddDelegate(options, delegate);
-                  }
-                  break;
-                }
-                case Delegate::Metal: {
-                  if (!TFLIsMetalDelegateAvailable()) {
-                    callInvoker->invokeAsync([=]() {
-                      promise->reject("Metal Delegate is not enabled! Set $EnableMetalDelegate to true in Podfile and rebuild.");
-                    });
+                  case Delegate::Metal: {
+                    reject("Metal Delegate is only supported on iOS!");
                     return;
                   }
-                  auto delegate = TFLCreateMetalDelegate(enableFp16);
-                  if (delegate != nullptr) {
-                    TfLiteInterpreterOptionsAddDelegate(options, delegate);
-                  }
-                  break;
-                }
-#endif
-#ifdef ANDROID
-                case Delegate::NnApi: {
-                  TfLiteNnapiDelegateOptions delegateOptions = TfLiteNnapiDelegateOptionsDefault();
-                  auto delegate = TfLiteNnapiDelegateCreate(&delegateOptions);
-                  TfLiteInterpreterOptionsAddDelegate(options, delegate);
-                  break;
-                }
-                case Delegate::AndroidGPU: {
-                  TfLiteGpuDelegateOptionsV2 delegateOptions = TfLiteGpuDelegateOptionsV2Default();
-                  // Tuned for repeated, latency-sensitive inference (this lib runs
-                  // the same model many times), not the default one-shot FP32 preset:
-                  //  - FP16 compute (≈1.5-2x faster on mobile GPUs; minor precision loss)
-                  //  - SUSTAINED_SPEED: keep the GPU warm across calls, allow better tuning
-                  //  - MIN_LATENCY priority: optimize per-invoke latency
-                  delegateOptions.is_precision_loss_allowed = enableFp16 ? 1 : 0;
-                  delegateOptions.inference_preference =
-                      TFLITE_GPU_INFERENCE_PREFERENCE_SUSTAINED_SPEED;
-                  delegateOptions.inference_priority1 = TFLITE_GPU_INFERENCE_PRIORITY_MIN_LATENCY;
-                  auto delegate = TfLiteGpuDelegateV2Create(&delegateOptions);
-                  TfLiteInterpreterOptionsAddDelegate(options, delegate);
-                  break;
-                }
 #else
-                case Delegate::NnApi: {
-                  callInvoker->invokeAsync([=]() {
-                    promise->reject("NNAPI Delegate is only supported on Android!");
-                  });
-                  return;
-                }
-                case Delegate::AndroidGPU: {
-                  callInvoker->invokeAsync([=]() {
-                    promise->reject("Android GPU Delegate is only supported on Android!");
-                  });
-                  return;
-                }
-#endif
-                default: {
-              // Default CPU path. When fp16 is requested, attach an XNNPACK
-              // delegate forcing fp16 compute (fast on ARMv8.2-FP16 CPUs).
-#ifdef ANDROID
-                  if (enableFp16) {
-                    FastTfliteXNNPackDelegateOptions xnnOptions =
-                        TfLiteXNNPackDelegateOptionsDefault();
-                    xnnOptions.num_threads = numThreads;
-                    xnnOptions.flags |= FAST_TFLITE_XNNPACK_FLAG_FORCE_FP16;
-                    auto xnn = TfLiteXNNPackDelegateCreate(&xnnOptions);
-                    if (xnn != nullptr) {
-                      TfLiteInterpreterOptionsAddDelegate(options, xnn);
+                  case Delegate::CoreML: {
+                    if (!TFLIsCoreMLDelegateAvailable()) {
+                      reject("CoreML Delegate is not enabled! Set $EnableCoreMLDelegate to true in Podfile and rebuild.");
+                      return;
                     }
+                    auto delegate = TFLCreateCoreMLDelegate();
+                    if (delegate != nullptr) {
+                      TfLiteInterpreterOptionsAddDelegate(options, delegate);
+                    }
+                    break;
+                  }
+                  case Delegate::Metal: {
+                    if (!TFLIsMetalDelegateAvailable()) {
+                      reject("Metal Delegate is not enabled! Set $EnableMetalDelegate to true in Podfile and rebuild.");
+                      return;
+                    }
+                    auto delegate = TFLCreateMetalDelegate(enableFp16);
+                    if (delegate != nullptr) {
+                      TfLiteInterpreterOptionsAddDelegate(options, delegate);
+                    }
+                    break;
                   }
 #endif
+#ifdef ANDROID
+                  case Delegate::NnApi: {
+                    TfLiteNnapiDelegateOptions delegateOptions = TfLiteNnapiDelegateOptionsDefault();
+                    auto delegate = TfLiteNnapiDelegateCreate(&delegateOptions);
+                    TfLiteInterpreterOptionsAddDelegate(options, delegate);
+                    break;
+                  }
+                  case Delegate::AndroidGPU: {
+                    TfLiteGpuDelegateOptionsV2 delegateOptions = TfLiteGpuDelegateOptionsV2Default();
+                    // Tuned for repeated, latency-sensitive inference (this lib runs
+                    // the same model many times), not the default one-shot FP32 preset:
+                    //  - FP16 compute (≈1.5-2x faster on mobile GPUs; minor precision loss)
+                    //  - SUSTAINED_SPEED: keep the GPU warm across calls, allow better tuning
+                    //  - MIN_LATENCY priority: optimize per-invoke latency
+                    delegateOptions.is_precision_loss_allowed = enableFp16 ? 1 : 0;
+                    delegateOptions.inference_preference =
+                        TFLITE_GPU_INFERENCE_PREFERENCE_SUSTAINED_SPEED;
+                    delegateOptions.inference_priority1 = TFLITE_GPU_INFERENCE_PRIORITY_MIN_LATENCY;
+                    auto delegate = TfLiteGpuDelegateV2Create(&delegateOptions);
+                    TfLiteInterpreterOptionsAddDelegate(options, delegate);
+                    break;
+                  }
+#else
+                  case Delegate::NnApi: {
+                    reject("NNAPI Delegate is only supported on Android!");
+                    return;
+                  }
+                  case Delegate::AndroidGPU: {
+                    reject("Android GPU Delegate is only supported on Android!");
+                    return;
+                  }
+#endif
+                  default: {
+                    // Default CPU path. When fp16 is requested, attach an XNNPACK
+                    // delegate forcing fp16 compute (fast on ARMv8.2-FP16 CPUs).
+#ifdef ANDROID
+                    if (enableFp16) {
+                      FastTfliteXNNPackDelegateOptions xnnOptions =
+                          TfLiteXNNPackDelegateOptionsDefault();
+                      xnnOptions.num_threads = numThreads;
+                      xnnOptions.flags |= FAST_TFLITE_XNNPACK_FLAG_FORCE_FP16;
+                      auto xnn = TfLiteXNNPackDelegateCreate(&xnnOptions);
+                      if (xnn != nullptr) {
+                        TfLiteInterpreterOptionsAddDelegate(options, xnn);
+                      }
+                    }
+#endif
+                  }
                 }
-              }
 
-              auto profilerState = std::make_shared<TensorflowProfilerState>();
+                auto profilerState = std::make_shared<TensorflowProfilerState>();
 
-              auto interpreter = TfLiteInterpreterCreate(model, options);
+                auto interpreter = TfLiteInterpreterCreate(model, options);
 
-              if (interpreter == nullptr) {
-                callInvoker->invokeAsync([=]() {
-                  promise->reject("Failed to create TFLite interpreter from model \"" + modelPath +
-                                  "\"!");
+                if (interpreter == nullptr) {
+                  reject("Failed to create TFLite interpreter from model \"" + modelPath +
+                                    "\"!");
+                  return;
+                }
+
+                // Initialize Model and allocate memory buffers
+                auto plugin = std::make_shared<TensorflowPlugin>(
+                    interpreter, buffer, delegateType, callInvoker, debugMode, profilerState);
+
+                callInvoker->invokeAsync([weakPending, plugin](jsi::Runtime& runtime) {
+                  if (auto pending = weakPending.lock()) {
+                    pending->allowRelease();
+                    auto result = jsi::Object::createFromHostObject(runtime, plugin);
+                    pending->promise->resolve(std::move(result));
+                  }
                 });
-                return;
+
+                auto end = std::chrono::steady_clock::now();
+                log("Successfully loaded Tensorflow Model in %i ms!",
+                    std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+              } catch (std::exception& error) {
+                std::string message = error.what();
+                reject(message);
               }
-
-              // Initialize Model and allocate memory buffers
-              auto plugin = std::make_shared<TensorflowPlugin>(
-                  interpreter, buffer, delegateType, callInvoker, debugMode, profilerState);
-
-              callInvoker->invokeAsync([=, &runtime]() {
-                auto result = jsi::Object::createFromHostObject(runtime, plugin);
-                promise->resolve(std::move(result));
-              });
-
-              auto end = std::chrono::steady_clock::now();
-              log("Successfully loaded Tensorflow Model in %i ms!",
-                  std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
-            } catch (std::exception& error) {
-              std::string message = error.what();
-              callInvoker->invokeAsync([=]() { promise->reject(message); });
-            }
-          });
+            }).detach();
+          } catch (const std::exception& error) {
+            pending->allowRelease();
+            pending->promise->reject(error.what());
+          }
         });
         return promise;
       });

@@ -32,14 +32,8 @@ public:
     auto jsCallInvoker = jsCallInvokerHolder->cthis()->getCallInvoker();
 
     auto fetchByteDataFromUrl = [](std::string url) {
-      // Attaching Current Thread to JVM
-      JNIEnv* env = nullptr;
-      int getEnvStat = java_machine->GetEnv((void**)&env, JNI_VERSION_1_6);
-      if (getEnvStat == JNI_EDETACHED) {
-        if (java_machine->AttachCurrentThread(&env, nullptr) != 0) {
-          throw std::runtime_error("Failed to attach thread to JVM");
-        }
-      }
+      // Detach this loader worker from the JVM on both success and exceptions.
+      jni::ThreadScope threadScope;
 
       static const auto cls = javaClassStatic();
       static const auto method =

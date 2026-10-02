@@ -73,6 +73,8 @@ loadTensorflowModel({
 
 Loading a Model is asynchronous since Buffers need to be allocated. Make sure to check for any potential errors when loading a Model.
 
+Native initialization runs on a worker thread, so JavaScript timers and navigation remain responsive during loading. Pending callbacks are scoped to the React Native runtime and discarded after runtime teardown. Loading cannot currently be cancelled: a JavaScript timeout does not stop native driver work. Version 2.2.2 fixes initialization blocking the JavaScript thread and requires rebuilding the native app.
+
 ### Input and Output data
 
 TensorFlow uses _tensors_ as input and output formats. Since TensorFlow Lite is optimized to run on fixed array sized byte buffers, you are responsible for interpreting the raw data yourself.
