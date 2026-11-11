@@ -1,26 +1,43 @@
 #import "AppDelegate.h"
 
+#import <RCTDefaultReactNativeFactoryDelegate.h>
+#import <RCTReactNativeFactory.h>
 #import <React/RCTBundleURLProvider.h>
+#import <ReactAppDependencyProvider/RCTAppDependencyProvider.h>
+
+@interface ReactNativeDelegate : RCTDefaultReactNativeFactoryDelegate
+@end
+
+@interface AppDelegate ()
+@property(nonatomic, strong) ReactNativeDelegate* reactNativeDelegate;
+@property(nonatomic, strong) RCTReactNativeFactory* reactNativeFactory;
+@end
 
 @implementation AppDelegate
 
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
-{
-  self.moduleName = @"TfliteExample";
-  // You can add your custom initial props in the dictionary below.
-  // They will be passed down to the ViewController used by React Native.
-  self.initialProps = @{};
+- (BOOL)application:(UIApplication*)application
+    didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
+  self.reactNativeDelegate = [ReactNativeDelegate new];
+  self.reactNativeDelegate.dependencyProvider = [RCTAppDependencyProvider new];
+  self.reactNativeFactory =
+      [[RCTReactNativeFactory alloc] initWithDelegate:self.reactNativeDelegate];
+  self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
 
-  return [super application:application didFinishLaunchingWithOptions:launchOptions];
+  [self.reactNativeFactory startReactNativeWithModuleName:@"TfliteExample"
+                                                 inWindow:self.window
+                                            launchOptions:launchOptions];
+  return YES;
 }
 
-- (NSURL *)sourceURLForBridge:(RCTBridge *)bridge
-{
-  return [self getBundleURL];
+@end
+
+@implementation ReactNativeDelegate
+
+- (NSURL*)sourceURLForBridge:(RCTBridge*)bridge {
+  return [self bundleURL];
 }
 
-- (NSURL *)getBundleURL
-{
+- (NSURL*)bundleURL {
 #if DEBUG
   return [[RCTBundleURLProvider sharedSettings] jsBundleURLForBundleRoot:@"index"];
 #else

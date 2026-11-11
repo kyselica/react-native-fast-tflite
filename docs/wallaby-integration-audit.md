@@ -36,3 +36,7 @@ Wallaby intentionally creates a fresh backbone interpreter per detector mount/ro
 6. Verify cold/warm cache behavior, real inference and output correctness on physical Android OpenCL hardware. Check other GPU backends and iOS for regressions. Contract tests and emulator packaging checks do not establish a speedup.
 
 Wallaby PR [#466](https://github.com/aperturesports/wallaby/pull/466) can then become the dependency/configuration migration. Its existing diagnostics integration should consume the same package release. App changes are deliberately deferred until that release exists.
+
+## React Native compatibility and CI
+
+The old example pinned React Native 0.73.3 even though the published 2.2.2 loader already used newer runtime-aware `LongLivedObject` and `CallInvoker` APIs. Android CI exposed this as real native compiler errors. The package and example now pin RN 0.86.3/React 19.2.3, declare the supported peer range, and use matching native templates and VisionCamera 5 integration. CI builds the complete Android example for arm64 and x86_64; it also checks the example's types directly and runs the package tests. Older React Native compatibility is outside this fork's declared support.

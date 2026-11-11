@@ -9,7 +9,10 @@ We want this community to be friendly and respectful to each other. Please follo
 To get started with the project, run `yarn` in the root directory to install the required dependencies for each package:
 
 ```sh
-yarn
+nvm use
+npm install --global yarn@1.22.19
+yarn install --frozen-lockfile
+yarn --cwd example install --frozen-lockfile
 ```
 
 > While it's possible to use [`npm`](https://github.com/npm/cli), the tooling is built around [`yarn`](https://classic.yarnpkg.com/), so you'll have an easier time if you use `yarn` for development.
@@ -20,6 +23,13 @@ To start the packager:
 
 ```sh
 yarn example start
+```
+
+For the CI-equivalent Android build (SDK 36, NDK 27.1 and JDK 17):
+
+```sh
+cd example/android
+./gradlew assembleDebug --no-daemon -PreactNativeArchitectures=arm64-v8a,x86_64
 ```
 
 To run the example app on Android:
@@ -38,7 +48,9 @@ Make sure your code passes TypeScript and ESLint. Run the following to verify:
 
 ```sh
 yarn typecheck
+yarn --cwd example typescript
 yarn lint
+yarn --cwd example lint
 ```
 
 To fix formatting errors, run the following:
@@ -56,7 +68,6 @@ yarn test
 To edit the Objective-C or Swift files, open `example/ios/TfliteExample.xcworkspace` in XCode and find the source files at `Pods > Development Pods > react-native-fast-tflite`.
 
 To edit the Java or Kotlin files, open `example/android` in Android studio and find the source files at `react-native-fast-tflite` under `Android`.
-
 
 ### Commit message convention
 

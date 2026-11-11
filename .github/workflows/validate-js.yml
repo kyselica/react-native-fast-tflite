@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - codex/native-model-loader
     paths:
       - '.github/workflows/validate-js.yml'
       - 'src/**'
@@ -14,7 +15,6 @@ on:
       - 'example/*.json'
       - 'example/*.js'
       - 'example/*.lock'
-      - 'example/*.tsx'
   pull_request:
     paths:
       - '.github/workflows/validate-js.yml'
@@ -26,81 +26,37 @@ on:
       - 'example/*.json'
       - 'example/*.js'
       - 'example/*.lock'
-      - 'example/*.tsx'
+
+permissions:
+  contents: read
 
 jobs:
-  compile:
-    name: Compile JS (tsc)
+  validate:
+    name: Typecheck, test and lint package and example
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Install reviewdog
-      uses: reviewdog/action-setup@v1
-
-    - name: Get yarn cache directory path
-      id: yarn-cache-dir-path
-      run: echo "::set-output name=dir::$(yarn cache dir)"
-    - name: Restore node_modules from cache
-      uses: actions/cache@v4
-      id: yarn-cache
-      with:
-        path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-        key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-yarn-
-
-    - name: Install node_modules
-      run: yarn install --frozen-lockfile
-    - name: Install node_modules (example/)
-      run: yarn install --frozen-lockfile --cwd example
-
-    - name: Run TypeScript # Reviewdog tsc errorformat: %f:%l:%c - error TS%n: %m
-      run: |
-        yarn typescript | reviewdog -name="tsc" -efm="%f(%l,%c): error TS%n: %m" -reporter="github-pr-review" -filter-mode="nofilter" -fail-on-error -tee
-      env:
-        REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Run TypeScript in example/ # Reviewdog tsc errorformat: %f:%l:%c - error TS%n: %m
-      run: |
-        cd example && yarn typescript | reviewdog -name="tsc" -efm="%f(%l,%c): error TS%n: %m" -reporter="github-pr-review" -filter-mode="nofilter" -fail-on-error -tee && cd ..
-      env:
-        REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  lint:
-    name: Lint JS (eslint, prettier)
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Get yarn cache directory path
-      id: yarn-cache-dir-path
-      run: echo "::set-output name=dir::$(yarn cache dir)"
-    - name: Restore node_modules from cache
-      uses: actions/cache@v4
-      id: yarn-cache
-      with:
-        path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-        key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-yarn-
-
-    - name: Install node_modules
-      run: yarn install --frozen-lockfile
-    - name: Install node_modules (example/)
-      run: yarn install --frozen-lockfile --cwd example
-
-    - name: Run ESLint
-      run: yarn lint -f @jamesacarr/github-actions
-
-    - name: Run ESLint with auto-fix
-      run: yarn lint --fix
-
-    - name: Run ESLint in example/
-      run: cd example && yarn lint -f @jamesacarr/github-actions && cd ..
-
-    - name: Run ESLint in example/ with auto-fix
-      run: cd example && yarn lint --fix && cd ..
-
-    - name: Verify no files have changed after auto-fix
-      run: git diff --exit-code HEAD
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            example/yarn.lock
+      - name: Install Yarn
+        run: npm install --global yarn@1.22.19
+      - name: Install package and example dependencies
+        run: |
+          yarn install --frozen-lockfile
+          yarn install --frozen-lockfile --cwd example
+      - name: Typecheck package and example
+        run: |
+          yarn typescript
+          yarn --cwd example typescript
+      - name: Run package tests
+        run: yarn test --runInBand
+      - name: Lint package and example
+        run: |
+          yarn lint
+          yarn --cwd example lint
+          git diff --exit-code

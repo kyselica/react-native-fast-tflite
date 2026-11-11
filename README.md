@@ -17,6 +17,12 @@ A high-performance [TensorFlow Lite](https://www.tensorflow.org/lite) library fo
 - 🖥️ Supports GPU-accelerated delegates (CoreML/Metal/OpenGL)
 - 📸 Easy [VisionCamera](https://github.com/mrousavy/react-native-vision-camera) integration
 
+## Compatibility
+
+This fork targets React Native **0.86.3** with the New Architecture and React **19.2.3**. Its peer dependency range is `react-native: ^0.86.3`; React Native 0.73 is unsupported because the native loader requires runtime-aware callback/lifetime APIs.
+
+Use Node 24 (`.nvmrc`) for development and CI. The example uses Android SDK 36, NDK 27.1 and JDK 17, with Android API 26+ required by its GPU resizer. iOS builds require iOS 15.1+ and a current Xcode/CocoaPods toolchain.
+
 ## Installation
 
 1. Add the npm package

@@ -3,17 +3,20 @@ import * as React from 'react'
 
 import { StyleSheet, View, Text, ActivityIndicator } from 'react-native'
 import {
-  Tensor,
-  TensorflowModel,
+  type Tensor,
+  type TensorflowModel,
   useTensorflowModel,
-} from 'react-native-fast-tflite'
+} from '@kyselicaa/react-native-fast-tflite'
 import {
   Camera,
+  CommonResolutions,
+  type Frame,
   useCameraDevice,
   useCameraPermission,
-  useFrameProcessor,
+  useFrameOutput,
 } from 'react-native-vision-camera'
-import { useResizePlugin } from 'vision-camera-resize-plugin'
+import { useResizer } from 'react-native-vision-camera-resizer'
+import { createSynchronizable, scheduleOnRN } from 'react-native-worklets'
 
 function tensorToString(tensor: Tensor): string {
   return `\n  - ${tensor.dataType} ${tensor.name}[${tensor.shape}]`
@@ -27,7 +30,8 @@ function modelToString(model: TensorflowModel): string {
 }
 
 export default function App(): React.ReactNode {
-  const { hasPermission, requestPermission } = useCameraPermission()
+  const { hasPermission, canRequestPermission, requestPermission } =
+    useCameraPermission()
   const device = useCameraDevice('back')
 
   // from https://www.kaggle.com/models/tensorflow/efficientdet/frameworks/tfLite
@@ -36,40 +40,58 @@ export default function App(): React.ReactNode {
 
   React.useEffect(() => {
     if (actualModel == null) return
-    console.log(`Model loaded! Shape:\n${modelToString(actualModel)}]`)
+    console.log(`Model loaded! Shape:\n${modelToString(actualModel)}`)
   }, [actualModel])
 
-  const { resize } = useResizePlugin()
+  const { resizer, error: resizerError } = useResizer({
+    width: 320,
+    height: 320,
+    channelOrder: 'rgb',
+    dataType: 'uint8',
+    pixelLayout: 'interleaved',
+    scaleMode: 'cover',
+  })
+  const lastResultLog = React.useMemo(() => createSynchronizable(0), [])
+  const reportDetections = React.useCallback((count: number) => {
+    console.log('Detections: ' + count)
+  }, [])
 
-  const frameProcessor = useFrameProcessor(
-    (frame) => {
+  const onFrame = React.useCallback(
+    (frame: Frame) => {
       'worklet'
-      if (actualModel == null) {
-        // model is still loading...
-        return
-      }
+      try {
+        if (actualModel == null || resizer == null) return
 
-      console.log(`Running inference on ${frame}`)
-      const resized = resize(frame, {
-        scale: {
-          width: 320,
-          height: 320,
-        },
-        pixelFormat: 'rgb',
-        dataType: 'uint8',
-      })
-      const result = actualModel.runSync([resized])
-      const num_detections = result[3]?.[0] ?? 0
-      console.log('Result: ' + num_detections)
+        const resized = resizer.resize(frame)
+        try {
+          const input = new Uint8Array(resized.getPixelBuffer())
+          const result = actualModel.runSync([input])
+          const now = performance.now()
+          if (now - lastResultLog.getBlocking() >= 1000) {
+            lastResultLog.setBlocking(now)
+            scheduleOnRN(reportDetections, Number(result[3]?.[0] ?? 0))
+          }
+        } finally {
+          // The pixel buffer remains valid only while its GPU frame is alive.
+          resized.dispose()
+        }
+      } finally {
+        frame.dispose()
+      }
     },
-    [actualModel]
+    [actualModel, resizer, lastResultLog, reportDetections]
   )
 
-  React.useEffect(() => {
-    requestPermission()
-  }, [requestPermission])
+  const frameOutput = useFrameOutput({
+    targetResolution: CommonResolutions.VGA_4_3,
+    pixelFormat: 'yuv',
+    dropFramesWhileBusy: true,
+    onFrame,
+  })
 
-  console.log(`Model: ${model.state} (${model.model != null})`)
+  React.useEffect(() => {
+    if (canRequestPermission) requestPermission()
+  }, [canRequestPermission, requestPermission])
 
   return (
     <View style={styles.container}>
@@ -78,19 +100,22 @@ export default function App(): React.ReactNode {
           device={device}
           style={StyleSheet.absoluteFill}
           isActive={true}
-          frameProcessor={frameProcessor}
-          pixelFormat="yuv"
+          outputs={[frameOutput]}
         />
       ) : (
         <Text>No Camera available.</Text>
       )}
 
-      {model.state === 'loading' && (
+      {(model.state === 'loading' ||
+        (resizer == null && resizerError == null)) && (
         <ActivityIndicator size="small" color="white" />
       )}
 
       {model.state === 'error' && (
         <Text>Failed to load model! {model.error.message}</Text>
+      )}
+      {resizerError != null && (
+        <Text>Failed to create resizer! {resizerError.message}</Text>
       )}
     </View>
   )

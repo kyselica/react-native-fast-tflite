@@ -4,11 +4,16 @@ on:
   push:
     branches:
       - main
+      - privatePublish
+      - codex/native-model-loader
     paths:
       - '.github/workflows/build-android.yml'
       - 'cpp/**'
       - 'android/**'
       - 'example/android/**'
+      - 'package.json'
+      - 'example/package.json'
+      - 'example/react-native.config.js'
       - 'yarn.lock'
       - 'example/yarn.lock'
   pull_request:
@@ -17,8 +22,14 @@ on:
       - 'cpp/**'
       - 'android/**'
       - 'example/android/**'
+      - 'package.json'
+      - 'example/package.json'
+      - 'example/react-native.config.js'
       - 'yarn.lock'
       - 'example/yarn.lock'
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -26,30 +37,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install Yarn
+        run: npm install --global yarn@1.22.19
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: 17
-          java-package: jdk
-
-      - name: Get yarn cache directory path
+          distribution: temurin
+          java-version: '17'
+      - name: Get Yarn cache directory
         id: yarn-cache-dir-path
-        run: echo "::set-output name=dir::$(yarn cache dir)"
-      - name: Restore node_modules from cache
+        run: echo "dir=$(yarn cache dir)" >> "$GITHUB_OUTPUT"
+      - name: Restore Yarn cache
         uses: actions/cache@v4
-        id: yarn-cache
         with:
           path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          key: ${{ runner.os }}-yarn-${{ hashFiles('yarn.lock', 'example/yarn.lock') }}
           restore-keys: |
             ${{ runner.os }}-yarn-
-      - name: Install node_modules
+      - name: Install package dependencies
         run: yarn install --frozen-lockfile
-      - name: Install node_modules for example/
+      - name: Install example dependencies
         run: yarn install --frozen-lockfile --cwd example
-
       - name: Restore Gradle cache
         uses: actions/cache@v4
         with:
@@ -59,5 +70,12 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
-      - name: Run Gradle Build for example/android/
-        run: cd example/android && ./gradlew assembleDebug --build-cache && cd ../..
+      - name: Build Android example for arm64 and x86_64
+        working-directory: example/android
+        run: ./gradlew assembleDebug --build-cache --no-daemon --max-workers=2 -PreactNativeArchitectures=arm64-v8a,x86_64
+      - name: Upload example APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-example-debug
+          path: example/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
