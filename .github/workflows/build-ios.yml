@@ -31,7 +31,8 @@ on:
 jobs:
   build:
     name: Build iOS Example App
-    runs-on: macOS-latest
+    # The ARM64 pool behind macos-latest failed runner acquisition before any steps ran.
+    runs-on: macos-26-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
