@@ -118,6 +118,7 @@ describe('loadTensorflowModel', () => {
       'default',
       1,
       false,
+      false,
       false
     )
   })
@@ -138,6 +139,7 @@ describe('loadTensorflowModel', () => {
       'default',
       1,
       false,
+      false,
       false
     )
     expect(model).toBe(fakeNativeModel)
@@ -153,6 +155,7 @@ describe('loadTensorflowModel', () => {
       'metal',
       4,
       false,
+      false,
       false
     )
   })
@@ -167,6 +170,7 @@ describe('loadTensorflowModel', () => {
       'default',
       1,
       true,
+      false,
       false
     )
   })
@@ -180,6 +184,22 @@ describe('loadTensorflowModel', () => {
       'file:///model.tflite',
       'default',
       1,
+      false,
+      true,
+      false
+    )
+  })
+
+  it('forwards opt-in GPU compilation caching as the sixth argument', async () => {
+    await loadTensorflowModel(
+      { url: 'file:///model.tflite' },
+      { delegate: 'android-gpu', enableGpuCompilationCache: true }
+    )
+    expect(global.__loadTensorflowModel).toHaveBeenCalledWith(
+      'file:///model.tflite',
+      'android-gpu',
+      1,
+      false,
       false,
       true
     )

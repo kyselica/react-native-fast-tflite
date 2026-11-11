@@ -25,7 +25,8 @@ declare global {
     delegate: TensorflowModelDelegate,
     numThreads: number,
     debugMode: boolean,
-    enableFp16: boolean
+    enableFp16: boolean,
+    enableGpuCompilationCache: boolean
   ) => Promise<TensorflowModel>
 }
 // Installs the JSI bindings into the global namespace.
@@ -86,6 +87,15 @@ export interface TensorflowModelOptions {
    * @default false
    */
   enableFp16?: boolean
+  /**
+   * Cache compiled Android GPU programs in app-private, evictable storage.
+   * Only the OpenCL backend supports serialization. Other delegates/platforms
+   * ignore this option. Every load still owns a fresh interpreter and buffers.
+   * Cache failures retry uncached GPU once; CPU fallback remains caller policy.
+   * Requires a native rebuild when upgrading from a version without this option.
+   * @default false
+   */
+  enableGpuCompilationCache?: boolean
 }
 
 /**
@@ -338,6 +348,7 @@ export function loadTensorflowModel(
   let numThreads = 1
   let debugMode = false
   let enableFp16 = false
+  let enableGpuCompilationCache = false
   if (typeof delegateOrOptions === 'string') {
     delegate = delegateOrOptions
   } else if (typeof delegateOrOptions === 'object') {
@@ -345,6 +356,8 @@ export function loadTensorflowModel(
     numThreads = delegateOrOptions.numThreads ?? 1
     debugMode = delegateOrOptions.enableDebugMode ?? false
     enableFp16 = delegateOrOptions.enableFp16 ?? false
+    enableGpuCompilationCache =
+      delegateOrOptions.enableGpuCompilationCache ?? false
   }
 
   // Use .then() rather than async/await so we never introduce an extra microtask
@@ -352,7 +365,14 @@ export function loadTensorflowModel(
   // be accessed outside their valid scope in some RN/JSI versions.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (global as any)
-    .__loadTensorflowModel(uri, delegate, numThreads, debugMode, enableFp16)
+    .__loadTensorflowModel(
+      uri,
+      delegate,
+      numThreads,
+      debugMode,
+      enableFp16,
+      enableGpuCompilationCache
+    )
     .then((nativeModel: TensorflowModel) =>
       debugMode ? wrapWithDebugLogging(nativeModel) : nativeModel
     )

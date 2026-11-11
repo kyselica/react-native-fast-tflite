@@ -31,6 +31,8 @@ Pod::Spec.new do |s|
   s.source       = { :git => "https://github.com/mrousavy/react-native-fast-tflite.git", :tag => "#{s.version}" }
 
   s.source_files = "ios/**/*.{h,m,mm}", "cpp/**/*.{hpp,cpp,mm,c,h}"
+  # Android cache helpers include LiteRT GPU headers that TensorFlowLiteC does not ship.
+  s.exclude_files = "cpp/GpuModel.h", "cpp/GpuCompilationCache.h"
 
   # Base xcconfig
   s.pod_target_xcconfig = {

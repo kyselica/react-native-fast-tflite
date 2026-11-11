@@ -1,0 +1,41 @@
+name: Native contracts
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/native-contracts.yml'
+      - 'cpp/**'
+      - 'android/src/main/java/**'
+      - 'tests/**'
+      - 'scripts/test-native.mjs'
+  push:
+    branches:
+      - main
+      - privatePublish
+      - codex/native-model-loader
+    paths:
+      - '.github/workflows/native-contracts.yml'
+      - 'cpp/**'
+      - 'android/src/main/java/**'
+      - 'tests/**'
+      - 'scripts/test-native.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install C++ compiler
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - name: Run native ownership, recovery and invalidation contracts
+        run: node scripts/test-native.mjs

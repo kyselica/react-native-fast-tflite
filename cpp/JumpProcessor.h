@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "JumpProcessorFailureDiagnostics.h"
 #include "TensorflowPlugin.h"
 #include "jsi/TypedArray.h"
 #include <atomic>
@@ -146,6 +147,7 @@ private:
   // 3=copy-failed, 4=invoke-failed, 5=output-null, 6=deliver-threw). See
   // SkipReason in the .mm.
   std::atomic<int> _lastSkip{0};
+  JumpProcessorFailureDiagnostics _failureDiagnostics;
   std::atomic<int> _lastInputBytes{0}; // input tensor byte size (debug)
   std::atomic<int> _expectedBytes{0};  // snapshot byte size (debug)
 

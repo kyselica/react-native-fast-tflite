@@ -31,7 +31,7 @@ export interface JumpProcessor {
    * frames per run; only the trigger cadence (and thus overlap/compute) changes.
    */
   setFullModelInterval(interval: number): void
-  /** Clear the ring + counters. Any in-flight result is discarded. */
+  /** Clear the ring and discard in-flight results. Lifetime debug counters are preserved. */
   reset(): void
   /** Stop the background thread and release native resources. Idempotent. */
   dispose(): void
@@ -39,7 +39,8 @@ export interface JumpProcessor {
    * Debug counters for diagnosing the pipeline. Read-only snapshot; cheap to
    * poll. `lastSkip` names why the most recent run early-returned:
    * 0=ok, 1=reset/generation, 2=input-tensor-null, 3=input-copy-failed,
-   * 4=invoke-failed, 5=output-tensor-null.
+   * 4=invoke-failed, 5=output-tensor-null, 6=result-callback-threw.
+   * A reset/generation skip (1) is expected cancellation, not a failure.
    */
   readonly stats: {
     framesPushed: number
@@ -47,6 +48,10 @@ export interface JumpProcessor {
     runsStarted: number
     runsCompleted: number
     lastSkip: number
+    /** Lifetime failures (codes 2–6), preserved across successful runs and reset(). */
+    failureCount: number
+    /** Most recently recorded failure code (2–6), or 0 before the first failure. */
+    lastFailure: number
     inputTensorBytes: number
     snapshotBytes: number
     busy: boolean

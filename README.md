@@ -75,6 +75,29 @@ Loading a Model is asynchronous since Buffers need to be allocated. Make sure to
 
 Native initialization runs on a worker thread, so JavaScript timers and navigation remain responsive during loading. Pending callbacks are scoped to the React Native runtime and discarded after runtime teardown. Loading cannot currently be cancelled: a JavaScript timeout does not stop native driver work. Version 2.2.2 fixes initialization blocking the JavaScript thread and requires rebuilding the native app.
 
+### Android GPU compilation cache
+
+Opt in when loading models repeatedly with the Android GPU delegate:
+
+```ts
+const model = await loadTensorflowModel(require('assets/my-model.tflite'), {
+  delegate: 'android-gpu',
+  enableGpuCompilationCache: true,
+})
+```
+
+`enableGpuCompilationCache` defaults to `false`. It enables LiteRT's OpenCL program/model serialization; OpenGL, CPU and iOS gain no compilation caching. Every load still creates its own interpreter, GPU delegate, error reporter and output buffers. This does not make a model's JSI output buffers safe to share between worklet runtimes.
+
+The library hashes the exact model bytes, precision/thread/tuning settings, cache format, native runtime and package versions, and Android OS build fingerprint. Changing a model at the same URL invalidates its entry. Compiled artifacts live in Android's app-private, evictable code cache, limited to four entries/64 MiB after each completed writer. A nonblocking lock sends contending loads through uncached initialization. Disabled caching does not hash the model or access the disk cache.
+
+Cache setup failures use uncached GPU initialization. Recognized serialization failures release the failed attempt's resources, invalidate its entry and retry uncached GPU once. Driver/allocation failures propagate to the caller; the library does not choose CPU recovery. Native GPU diagnostics are bounded to 16 reports per interpreter. A serialization-enabled log means the option was configured, not that a cache hit occurred.
+
+A native rebuild is required after upgrading to this API. Measure cold/warm initialization and verify inference output on physical OpenCL hardware before relying on a startup improvement.
+
+### Persistent JumpProcessor failure statistics
+
+`JumpProcessor.stats.failureCount` counts native failures over the processor's lifetime. `lastFailure` retains the last failure reason even when inference succeeds before the next stats poll. Both survive `reset()`; a new processor starts at zero. Reset/generation skips (`lastSkip === 1`) are excluded. Failure reasons are 2 (input unavailable), 3 (input copy failed), 4 (invoke failed), 5 (output unavailable), and 6 (exception). The TypeScript stats API includes both fields without requiring app-side patches or casts.
+
 ### Input and Output data
 
 TensorFlow uses _tensors_ as input and output formats. Since TensorFlow Lite is optimized to run on fixed array sized byte buffers, you are responsible for interpreting the raw data yourself.
@@ -307,3 +330,15 @@ See the [contributing guide](CONTRIBUTING.md) to learn how to contribute to the 
 ## License
 
 MIT
+
+## Native contract tests
+
+With Node 18+, a host C++17 compiler and a JDK on PATH:
+
+```sh
+npm run test:native
+```
+
+These compile and execute ownership, cleanup, serialization-only retry, opt-out, lock/eviction, model/configuration key invalidation and persistent failure-counter contracts. They use injected native outcomes and do not establish real GPU cache hits or performance. The normal Android/iOS builds remain necessary to validate integration with actual JSI and TFLite headers.
+
+The [Wallaby integration audit](docs/wallaby-integration-audit.md) records which app code moves here and the migration steps after publishing.

@@ -31,7 +31,8 @@
     "prepack": "bob build",
     "release": "release-it",
     "example": "yarn --cwd example",
-    "bootstrap": "yarn && yarn example && yarn example pods"
+    "bootstrap": "yarn && yarn example && yarn example pods",
+    "test:native": "node scripts/test-native.mjs"
   },
   "keywords": [
     "react-native",
