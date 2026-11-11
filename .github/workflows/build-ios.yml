@@ -77,6 +77,9 @@ jobs:
           fi
       - name: Upload native build evidence
         if: always()
+        # Artifact-service outages must not replace the actual compiler result.
+        continue-on-error: true
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: ios-build-evidence
