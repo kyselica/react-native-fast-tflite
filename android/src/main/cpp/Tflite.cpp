@@ -1,4 +1,5 @@
 #include <exception>
+#include <fbjni/ByteBuffer.h>
 #include <fbjni/fbjni.h>
 #include <jni.h>
 #include <jsi/jsi.h>
@@ -67,6 +68,21 @@ public:
 };
 
 } // namespace mrousavy
+
+std::string fastTfliteGpuCacheDirectory(Buffer buffer, const std::string& configuration) {
+  try {
+    facebook::jni::ThreadScope scope;
+    static const auto cls = mrousavy::TfliteModule::javaClassStatic();
+    static const auto method =
+        cls->getStaticMethod<jstring(facebook::jni::JByteBuffer::javaobject, std::string)>(
+            "getGpuCacheDirectory");
+    auto bytes =
+        facebook::jni::JByteBuffer::wrapBytes(static_cast<uint8_t*>(buffer.data), buffer.size);
+    return method(cls, bytes.get(), configuration)->toStdString();
+  } catch (...) {
+    return "";
+  }
+}
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
   java_machine = vm;

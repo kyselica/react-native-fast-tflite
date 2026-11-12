@@ -96,8 +96,13 @@ public:
 public:
   explicit TensorflowPlugin(TfLiteInterpreter* interpreter, Buffer model, Delegate delegate,
                             std::shared_ptr<react::CallInvoker> callInvoker, bool debugMode = false,
-                            std::shared_ptr<TensorflowProfilerState> profilerState = nullptr);
+                            std::shared_ptr<TensorflowProfilerState> profilerState = nullptr,
+                            bool tensorsAllocated = false);
   ~TensorflowPlugin();
+
+  void retainGpuResources(std::shared_ptr<void> resources) {
+    _gpuResources = std::move(resources);
+  }
 
   jsi::Value get(jsi::Runtime& runtime, const jsi::PropNameID& name) override;
   std::vector<jsi::PropNameID> getPropertyNames(jsi::Runtime& runtime) override;
@@ -158,6 +163,7 @@ private:
 #endif
 
 private:
+  std::shared_ptr<void> _gpuResources;
   TfLiteInterpreter* _interpreter = nullptr;
   Delegate _delegate = Delegate::Default;
   Buffer _model;

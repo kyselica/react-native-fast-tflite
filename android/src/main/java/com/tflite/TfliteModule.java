@@ -165,6 +165,18 @@ public class TfliteModule extends ReactContextBaseJavaModule {
     }
   }
 
+  @DoNotStrip
+  public static String getGpuCacheDirectory(java.nio.ByteBuffer model, String configuration) {
+    try {
+      Context context = weakContext.get();
+      if (context == null) return "";
+      return GpuCompilationCache.directory(context.getCodeCacheDir(), model,
+          configuration + ":" + BuildConfig.LIBRARY_PACKAGE_VERSION + ":" + android.os.Build.FINGERPRINT);
+    } catch (Exception ignored) {
+      return "";
+    }
+  }
+
   private static native boolean nativeInstall(long jsiPtr, CallInvokerHolderImpl jsCallInvoker);
 
   private static byte[] getLocalFileBytes(InputStream stream, File file) throws IOException {

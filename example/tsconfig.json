@@ -2,14 +2,9 @@
   "extends": "../tsconfig",
   "compilerOptions": {
     "paths": {
-      "react-native-fast-tflite": ["../src/index"]
+      "@kyselicaa/react-native-fast-tflite": ["../src/index"],
     },
   },
-  "include": [
-    "src",
-    "index.js"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["src", "index.js"],
+  "exclude": ["node_modules"],
 }

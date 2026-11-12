@@ -9,6 +9,11 @@ on:
       - 'cpp/**'
       - 'ios/**'
       - '*.podspec'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'example/package.json'
+      - 'example/yarn.lock'
+      - 'example/Gemfile*'
       - 'example/ios/**'
   pull_request:
     paths:
@@ -16,75 +21,69 @@ on:
       - 'cpp/**'
       - 'ios/**'
       - '*.podspec'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'example/package.json'
+      - 'example/yarn.lock'
+      - 'example/Gemfile*'
       - 'example/ios/**'
 
 jobs:
   build:
     name: Build iOS Example App
-    runs-on: macOS-latest
-    defaults:
-      run:
-        working-directory: example/ios
+    # The ARM64 pool behind macos-latest failed runner acquisition before any steps ran.
+    runs-on: macos-26-intel
     steps:
       - uses: actions/checkout@v4
-
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "::set-output name=dir::$(yarn cache dir)"
-      - name: Restore node_modules from cache
-        uses: actions/cache@v4
-        id: yarn-cache
+      - uses: actions/setup-node@v4
         with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
-      - name: Install node_modules for example/
-        run: yarn install --frozen-lockfile --cwd ..
+          node-version: '24'
+      - name: Install Yarn
+        run: npm install --global yarn@1.22.19
+      - name: Install package dependencies
+        run: yarn install --frozen-lockfile
+      - name: Install example dependencies
+        run: yarn install --frozen-lockfile --cwd example
 
-      - name: Setup Ruby (bundle)
+      - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: 2.6.10
+          ruby-version: '3.3'
           bundler-cache: true
-          working-directory: example/ios
-
-      - name: Restore Pods cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            example/ios/Pods
-            ~/Library/Caches/CocoaPods
-            ~/.cocoapods
-          key: ${{ runner.os }}-cocoapods-${{ hashFiles('**/Podfile.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cocoapods-
+          working-directory: example
       - name: Install Pods
-        run: pod install
-      - name: Install xcpretty
-        run: gem install xcpretty
+        working-directory: example
+        run: bundle exec pod install --project-directory=ios
       - name: Build App
-        run: "set -o pipefail && xcodebuild \
-          -toolchain com.apple.dt.toolchain.XcodeDefault \
-          -derivedDataPath build -UseModernBuildSystem=YES \
-          -workspace TfliteExample.xcworkspace \
-          -scheme TfliteExample \
-          -sdk iphonesimulator \
-          -configuration Debug \
-          -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-          build \
-          CODE_SIGNING_ALLOWED=NO 2>&1 | tee xcodebuild.log | xcpretty"
+        working-directory: example/ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace TfliteExample.xcworkspace \
+            -scheme TfliteExample \
+            -derivedDataPath build \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            build CODE_SIGNING_ALLOWED=NO 2>&1 | tee xcodebuild.log
 
       - name: Show raw failure diagnostics
         if: failure()
+        working-directory: example/ios
         run: |
-          grep -n -A 35 -B 5 -E 'Undefined symbols|error:|ld:' xcodebuild.log || true
-          tail -n 30 xcodebuild.log
-
-      - name: Upload raw build log
+          if [ -f xcodebuild.log ]; then
+            grep -n -A 35 -B 5 -E 'Undefined symbols|error:|ld:' xcodebuild.log || true
+            tail -n 30 xcodebuild.log
+          fi
+      - name: Upload native build evidence
         if: always()
+        # Artifact-service outages must not replace the actual compiler result.
+        continue-on-error: true
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
-          name: ios-build-log
-          path: example/ios/xcodebuild.log
+          name: ios-build-evidence
+          path: |
+            example/ios/xcodebuild.log
+            example/ios/Podfile.lock
           if-no-files-found: ignore

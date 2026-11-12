@@ -51,6 +51,8 @@ function makeFakeProcessor(): JumpProcessor {
       runsStarted: 0,
       runsCompleted: 0,
       lastSkip: 0,
+      failureCount: 0,
+      lastFailure: 0,
       inputTensorBytes: 0,
       snapshotBytes: 0,
       busy: false,

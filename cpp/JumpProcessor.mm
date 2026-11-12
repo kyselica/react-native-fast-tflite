@@ -269,6 +269,7 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
   TfLiteTensor* inputTensor = TfLiteInterpreterGetInputTensor(_interpreter, 0);
   if (inputTensor == nullptr) {
     _lastSkip.store(InputNull);
+    _failureDiagnostics.record(InputNull);
     return;
   }
   const size_t snapshotBytes = _snapshot.size() * sizeof(float);
@@ -283,6 +284,7 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
   TfLiteStatus copyStatus = TfLiteTensorCopyFromBuffer(inputTensor, _snapshot.data(), copyBytes);
   if (copyStatus != kTfLiteOk) {
     _lastSkip.store(CopyFailed);
+    _failureDiagnostics.record(CopyFailed);
     return;
   }
   const auto tInvokeStart = std::chrono::steady_clock::now();
@@ -290,6 +292,7 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
   TfLiteStatus status = TfLiteInterpreterInvoke(_interpreter);
   if (status != kTfLiteOk) {
     _lastSkip.store(InvokeFailed);
+    _failureDiagnostics.record(InvokeFailed);
     return;
   }
 
@@ -305,6 +308,7 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
       TfLiteInterpreterGetOutputTensor(_interpreter, _config.outputTensorPeriod);
   if (periodicityTensor == nullptr || periodTensor == nullptr) {
     _lastSkip.store(OutputNull);
+    _failureDiagnostics.record(OutputNull);
     return;
   }
   _lastSkip.store(Ok);
@@ -425,6 +429,7 @@ void JumpProcessor::runFullModelOnWorker(uint64_t generation, int writeIdx,
       // is visible in stats rather than silently swallowed (this is exactly
       // how the earlier byte/element bug hid itself).
       self->_lastSkip.store(6); // 6 = deliver-threw (see header doc)
+      self->_failureDiagnostics.record(6);
     }
   });
 }
@@ -487,6 +492,8 @@ jsi::Value JumpProcessor::get(jsi::Runtime& runtime, const jsi::PropNameID& prop
     obj.setProperty(runtime, "runsStarted", static_cast<double>(_runsStarted.load()));
     obj.setProperty(runtime, "runsCompleted", static_cast<double>(_runsCompleted.load()));
     obj.setProperty(runtime, "lastSkip", static_cast<double>(_lastSkip.load()));
+    obj.setProperty(runtime, "failureCount", static_cast<double>(_failureDiagnostics.count()));
+    obj.setProperty(runtime, "lastFailure", static_cast<double>(_failureDiagnostics.lastReason()));
     obj.setProperty(runtime, "inputTensorBytes", static_cast<double>(_lastInputBytes.load()));
     obj.setProperty(runtime, "snapshotBytes", static_cast<double>(_expectedBytes.load()));
     obj.setProperty(runtime, "busy", _busy.load());

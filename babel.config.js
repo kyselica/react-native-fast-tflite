@@ -1,9 +1,12 @@
-module.exports = {
-  presets: [
-    ['@babel/preset-env', { targets: { node: 'current' } }],
-    '@babel/preset-react',
-    '@babel/preset-typescript',
-    // Strip Flow types from react-native and @react-native packages
-    ['@babel/preset-flow', { all: true }],
-  ],
+module.exports = function (api) {
+  if (api.env('test') === true)
+    return { presets: ['module:@react-native/babel-preset'] }
+  return {
+    presets: [
+      ['@babel/preset-env', { targets: { node: 'current' } }],
+      '@babel/preset-react',
+      '@babel/preset-typescript',
+      ['@babel/preset-flow', { all: true }],
+    ],
+  }
 }

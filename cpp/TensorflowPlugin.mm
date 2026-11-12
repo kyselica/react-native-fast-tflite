@@ -11,13 +11,13 @@
 #include "TensorHelpers.h"
 #include "jsi/Promise.h"
 #include "jsi/TypedArray.h"
-#include <react/bridging/LongLivedObject.h>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
 #include <cstring>
 #include <future>
 #include <iostream>
+#include <react/bridging/LongLivedObject.h>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -162,6 +162,10 @@ public:
   std::shared_ptr<Promise> promise;
 };
 
+#ifdef ANDROID
+#include "GpuModel.h"
+#endif
+
 void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                                         std::shared_ptr<react::CallInvoker> callInvoker,
                                         FetchURLFunc fetchURL) {
@@ -209,6 +213,11 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
           enableFp16 = arguments[4].getBool();
         }
 
+        bool enableGpuCompilationCache = false;
+        if (count > 5 && arguments[5].isBool()) {
+          enableGpuCompilationCache = arguments[5].getBool();
+        }
+
         auto promise = Promise::createPromise(runtime, [=, &runtime](
                                                            std::shared_ptr<Promise> promise) {
           auto pending = std::make_shared<PendingModelLoad>(runtime, std::move(promise));
@@ -227,11 +236,34 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
           // An independent worker lets JS timers, navigation and CPU recovery run
           // even if a driver never returns. Never capture JSI values on this thread.
           try {
-            std::thread([fetchURL, modelPath, delegateType, numThreads, debugMode,
-                         enableFp16, callInvoker, weakPending, reject, start]() {
+            std::thread([fetchURL, modelPath, delegateType, numThreads, debugMode, enableFp16,
+                         enableGpuCompilationCache, callInvoker, weakPending, reject, start]() {
               try {
+#ifdef ANDROID
+                // Allocate before fetching the owning raw buffer so an allocation
+                // failure cannot strand model bytes outside the GPU factory's RAII.
+                auto gpuProfiler = delegateType == Delegate::AndroidGPU
+                                       ? std::make_shared<TensorflowProfilerState>()
+                                       : nullptr;
+#endif
                 // Fetch model from URL (JS bundle)
                 Buffer buffer = fetchURL(modelPath);
+#ifdef ANDROID
+                if (delegateType == Delegate::AndroidGPU) {
+                  auto plugin =
+                      fasttflite::loadGpuModel(buffer, numThreads, enableFp16, callInvoker,
+                                               debugMode, gpuProfiler, enableGpuCompilationCache);
+                  callInvoker->invokeAsync([weakPending, plugin](jsi::Runtime& runtime) {
+                    if (auto pending = weakPending.lock()) {
+                      pending->allowRelease();
+                      auto result = jsi::Object::createFromHostObject(runtime, plugin);
+                      pending->promise->resolve(std::move(result));
+                    }
+                  });
+                  log("Successfully loaded fresh GPU interpreter (compilation cache eligible)");
+                  return;
+                }
+#endif
 
                 // Load Model into Tensorflow
                 auto model = TfLiteModelCreate(buffer.data, buffer.size);
@@ -280,23 +312,9 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
 #endif
 #ifdef ANDROID
                   case Delegate::NnApi: {
-                    TfLiteNnapiDelegateOptions delegateOptions = TfLiteNnapiDelegateOptionsDefault();
+                    TfLiteNnapiDelegateOptions delegateOptions =
+                        TfLiteNnapiDelegateOptionsDefault();
                     auto delegate = TfLiteNnapiDelegateCreate(&delegateOptions);
-                    TfLiteInterpreterOptionsAddDelegate(options, delegate);
-                    break;
-                  }
-                  case Delegate::AndroidGPU: {
-                    TfLiteGpuDelegateOptionsV2 delegateOptions = TfLiteGpuDelegateOptionsV2Default();
-                    // Tuned for repeated, latency-sensitive inference (this lib runs
-                    // the same model many times), not the default one-shot FP32 preset:
-                    //  - FP16 compute (≈1.5-2x faster on mobile GPUs; minor precision loss)
-                    //  - SUSTAINED_SPEED: keep the GPU warm across calls, allow better tuning
-                    //  - MIN_LATENCY priority: optimize per-invoke latency
-                    delegateOptions.is_precision_loss_allowed = enableFp16 ? 1 : 0;
-                    delegateOptions.inference_preference =
-                        TFLITE_GPU_INFERENCE_PREFERENCE_SUSTAINED_SPEED;
-                    delegateOptions.inference_priority1 = TFLITE_GPU_INFERENCE_PRIORITY_MIN_LATENCY;
-                    auto delegate = TfLiteGpuDelegateV2Create(&delegateOptions);
                     TfLiteInterpreterOptionsAddDelegate(options, delegate);
                     break;
                   }
@@ -311,8 +329,8 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                   }
 #endif
                   default: {
-                    // Default CPU path. When fp16 is requested, attach an XNNPACK
-                    // delegate forcing fp16 compute (fast on ARMv8.2-FP16 CPUs).
+                // Default CPU path. When fp16 is requested, attach an XNNPACK
+                // delegate forcing fp16 compute (fast on ARMv8.2-FP16 CPUs).
 #ifdef ANDROID
                     if (enableFp16) {
                       FastTfliteXNNPackDelegateOptions xnnOptions =
@@ -333,8 +351,7 @@ void TensorflowPlugin::installToRuntime(jsi::Runtime& runtime,
                 auto interpreter = TfLiteInterpreterCreate(model, options);
 
                 if (interpreter == nullptr) {
-                  reject("Failed to create TFLite interpreter from model \"" + modelPath +
-                                    "\"!");
+                  reject("Failed to create TFLite interpreter from model \"" + modelPath + "\"!");
                   return;
                 }
 
@@ -396,11 +413,13 @@ std::string tfLiteStatusToString(TfLiteStatus status) {
 
 TensorflowPlugin::TensorflowPlugin(TfLiteInterpreter* interpreter, Buffer model, Delegate delegate,
                                    std::shared_ptr<react::CallInvoker> callInvoker, bool debugMode,
-                                   std::shared_ptr<TensorflowProfilerState> profilerState)
+                                   std::shared_ptr<TensorflowProfilerState> profilerState,
+                                   bool tensorsAllocated)
     : _interpreter(interpreter), _delegate(delegate), _model(model), _callInvoker(callInvoker),
       _debugMode(debugMode), _profilerState(std::move(profilerState)) {
   // Allocate memory for the model's input/output `TFLTensor`s.
-  TfLiteStatus status = TfLiteInterpreterAllocateTensors(_interpreter);
+  TfLiteStatus status =
+      tensorsAllocated ? kTfLiteOk : TfLiteInterpreterAllocateTensors(_interpreter);
   if (status != kTfLiteOk) {
     [[unlikely]];
     throw std::runtime_error(
@@ -412,14 +431,15 @@ TensorflowPlugin::TensorflowPlugin(TfLiteInterpreter* interpreter, Buffer model,
 }
 
 TensorflowPlugin::~TensorflowPlugin() {
+  // The interpreter references model bytes and its GPU delegate/error reporter.
+  if (_interpreter != nullptr) {
+    TfLiteInterpreterDelete(_interpreter);
+    _interpreter = nullptr;
+  }
   if (_model.data != nullptr) {
     free(_model.data);
     _model.data = nullptr;
     _model.size = 0;
-  }
-  if (_interpreter != nullptr) {
-    TfLiteInterpreterDelete(_interpreter);
-    _interpreter = nullptr;
   }
 }
 

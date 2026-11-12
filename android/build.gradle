@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import java.nio.file.Paths
 import org.gradle.api.file.RelativePath
 
@@ -49,6 +50,7 @@ static def findNodeModules(baseDir) {
 }
 
 def nodeModules = findNodeModules(projectDir)
+def packageVersion = new JsonSlurper().parse(file("../package.json")).version
 
 android {
   ndkVersion getExtOrDefault("ndkVersion")
@@ -60,6 +62,7 @@ android {
     minSdkVersion getExtOrIntegerDefault("minSdkVersion")
     targetSdkVersion getExtOrIntegerDefault("targetSdkVersion")
     buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString()
+    buildConfigField "String", "LIBRARY_PACKAGE_VERSION", "\"${packageVersion}\""
     externalNativeBuild {
       cmake {
         arguments "-DANDROID_STL=c++_shared",
@@ -98,6 +101,7 @@ android {
   }
 
   buildFeatures {
+    buildConfig true
     prefab true
   }
 
