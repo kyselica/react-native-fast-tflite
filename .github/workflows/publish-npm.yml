@@ -22,15 +22,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Validate tag matches package version
+        id: release
         run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "Publishing requires a version tag."
+            exit 1
+          fi
           TAG="${GITHUB_REF_NAME#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
           if [ "$TAG" != "$PKG_VERSION" ]; then
             echo "Tag version (v$TAG) does not match package.json version ($PKG_VERSION)."
             exit 1
+          fi
+          if [[ "$PKG_VERSION" == *-* ]]; then
+            echo "dist-tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "dist-tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install dependencies
@@ -39,9 +48,7 @@ jobs:
       - name: Verify publish registry
         run: |
           npm config get registry
-          npm config get @kyselica:registry
+          npm config get @kyselicaa:registry
 
       - name: Publish package
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance --tag "${{ steps.release.outputs.dist-tag }}"

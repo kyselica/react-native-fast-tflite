@@ -1,6 +1,6 @@
 {
   "name": "@kyselicaa/react-native-fast-tflite",
-  "version": "2.2.2",
+  "version": "3.0.0-rc.0",
   "description": "High-performance TensorFlow Lite library for React Native",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
@@ -13,6 +13,7 @@
     "android/src",
     "!android/src/main/cpp/lib",
     "android/build.gradle",
+    "android/consumer-rules.pro",
     "android/CMakeLists.txt",
     "android/gradle.properties",
     "ios",
